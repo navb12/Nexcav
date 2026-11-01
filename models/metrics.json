@@ -1,0 +1,96 @@
+{
+  "version": "v2.1.0-timeseries",
+  "model_type": "Time-Series Calibrated Sequence Classifier",
+  "dataset_source": "Physically Plausible Synthetic Telemetry Dataset (Chronological Split)",
+  "trained_at": "2026-10-31T20:30:22.848Z",
+  "window_length_seconds": 30,
+  "accuracy": 0.9682,
+  "f1_macro": 0.9674,
+  "recall_cavitation": 0.9635,
+  "classes": [
+    "Normal Operation",
+    "Incipient Cavitation",
+    "Developing Cavitation",
+    "Severe Cavitation"
+  ],
+  "confusion_matrix": [
+    [
+      795,
+      3,
+      0,
+      0
+    ],
+    [
+      42,
+      352,
+      0,
+      0
+    ],
+    [
+      0,
+      17,
+      377,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      363
+    ]
+  ],
+  "feature_importance": [
+    {
+      "feature": "head_diff",
+      "importance": 0.1246
+    },
+    {
+      "feature": "suction_vapor_margin",
+      "importance": 0.095
+    },
+    {
+      "feature": "slope_suction",
+      "importance": 0.0907
+    },
+    {
+      "feature": "current_vibration",
+      "importance": 0.0901
+    },
+    {
+      "feature": "current_discharge",
+      "importance": 0.0887
+    },
+    {
+      "feature": "current_suction",
+      "importance": 0.0884
+    },
+    {
+      "feature": "current_flow",
+      "importance": 0.0758
+    },
+    {
+      "feature": "flow_deviation_pct",
+      "importance": 0.0758
+    },
+    {
+      "feature": "std_suction",
+      "importance": 0.0599
+    },
+    {
+      "feature": "slope_discharge",
+      "importance": 0.0569
+    },
+    {
+      "feature": "std_vibration",
+      "importance": 0.056
+    },
+    {
+      "feature": "slope_flow",
+      "importance": 0.0554
+    },
+    {
+      "feature": "slope_vibration",
+      "importance": 0.0426
+    }
+  ]
+}

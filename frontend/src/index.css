@@ -1,0 +1,101 @@
+:root {
+  --bg-base: #0b0f17;
+  --bg-surface: #111722;
+  --bg-surface-elevated: #161f2e;
+  --bg-surface-subtle: #0d131d;
+  
+  --border-subtle: #1f2937;
+  --border-medium: #374151;
+  --border-active: #38bdf8;
+
+  --text-primary: #f9fafb;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+
+  --accent-cyan: #38bdf8;
+  --accent-cyan-dim: rgba(56, 189, 248, 0.12);
+
+  --status-normal: #10b981;
+  --status-normal-bg: rgba(16, 185, 129, 0.12);
+  --status-warning: #f59e0b;
+  --status-warning-bg: rgba(245, 158, 11, 0.12);
+  --status-critical: #ef4444;
+  --status-critical-bg: rgba(239, 68, 68, 0.14);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.4;
+}
+
+code, pre, .font-mono {
+  font-family: 'JetBrains Mono', 'SF Mono', Consolas, Menlo, monospace;
+}
+
+/* Industrial Scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-base);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-medium);
+  border-radius: 2px;
+}
+
+/* Keyframe Animations */
+@keyframes impellerSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes flowDash {
+  from { stroke-dashoffset: 40px; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes flowTurbulent {
+  0% { stroke-dashoffset: 40px; opacity: 0.9; }
+  50% { stroke-dashoffset: 15px; opacity: 0.6; }
+  100% { stroke-dashoffset: 0; opacity: 0.9; }
+}
+
+@keyframes bubbleFloat {
+  0% { transform: translateY(0) scale(0.5); opacity: 0; }
+  40% { opacity: 0.9; }
+  100% { transform: translateY(-28px) translateX(6px) scale(1.1); opacity: 0; }
+}
+
+@keyframes severeShockwave {
+  0%, 100% { opacity: 0.2; transform: scale(0.95); }
+  50% { opacity: 0.85; transform: scale(1.08); }
+}
+
+@keyframes alarmPulse {
+  0%, 100% { opacity: 1; border-color: var(--status-critical); }
+  50% { opacity: 0.4; border-color: rgba(239, 68, 68, 0.3); }
+}
+
+.alarm-active {
+  animation: alarmPulse 1.4s infinite ease-in-out;
+}

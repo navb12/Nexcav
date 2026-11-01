@@ -2,10 +2,12 @@
  * NEXCAV - Time-Series Sequence ML Engine & Alert Manager
  * 
  * Provides:
- * 1. 30-sample rolling window sequence feature extraction
- * 2. Multi-variate calibrated sequence inference (Strictly zero scenario/fault label inputs)
- * 3. Trend trajectory analysis (Stable / Deteriorating / Improving)
- * 4. Configurable persistence and anti-chatter alert manager
+ * 1. 30-sample rolling window sequence feature extraction strictly from telemetry.
+ * 2. Multi-variate calibrated sequence inference (Strictly zero scenario/fault label inputs).
+ * 3. Trend trajectory analysis (Stable / Deteriorating / Improving).
+ * 4. Configurable persistence and anti-chatter alert manager.
+ * 
+ * ZERO SHORTCUTS: No NPSH or actuator variables are used as inference inputs.
  */
 
 const fs = require('fs');
@@ -19,11 +21,6 @@ const NOMINAL_DEFAULT = {
   temperature: 52.5,
   rpm: 2950.0
 };
-
-// Water vapor pressure approximate curve around 50-75 deg C (in bar abs)
-function getVaporPressure(tempC) {
-  return Math.min(0.5, Math.max(0.08, 0.123 * Math.exp(0.035 * (tempC - 50.0))));
-}
 
 // Linear regression slope over 1-second sampled time array
 function calculateSlope(values) {
@@ -83,15 +80,15 @@ class SequenceMLEngine {
   }
 
   /**
-   * Extract sequence features from a rolling window of readings.
-   * If window has fewer than 30 readings (e.g. at cold start), pads with nominal/first reading.
+   * Extract sequence features from a rolling window of 6 sensor readings.
+   * If window has fewer than 30 readings, pads left with nominal/first reading.
+   * STRICTLY TELEMETRY DERIVED ONLY.
    */
   extractFeatures(windowSlice, nominal = NOMINAL_DEFAULT) {
     let window30 = [...windowSlice];
     if (window30.length === 0) {
       window30 = [nominal];
     }
-    // Pad left if fewer than 30 samples to allow early continuous inference
     while (window30.length < 30) {
       window30.unshift({ ...window30[0] });
     }
@@ -111,29 +108,31 @@ class SequenceMLEngine {
     const slopeVib = calculateSlope(vibrations);
     const slopeFlow = calculateSlope(flows);
     const slopeDisc = calculateSlope(discharges);
+    const slopeTemp = calculateSlope(temperatures);
 
     const stdSuct = calculateStd(suctions);
     const stdVib = calculateStd(vibrations);
 
-    const vapPress = getVaporPressure(latest.temperature ?? nominal.temperature);
-    const suctionVaporMargin = (latest.suction_pressure ?? nominal.suction_pressure) - vapPress;
     const headDiff = (latest.discharge_pressure ?? nominal.discharge_pressure) - (latest.suction_pressure ?? nominal.suction_pressure);
-    const flowDevPct = (((latest.flow_rate ?? nominal.flow_rate) - nominal.flow_rate) / nominal.flow_rate) * 100.0;
+    const vibToFlow = ((latest.vibration_rms ?? nominal.vibration_rms) / Math.max(1.0, latest.flow_rate ?? nominal.flow_rate)) * 100.0;
 
+    // 15 features matching FEATURE_KEYS
     const rawVector = [
       latest.suction_pressure ?? nominal.suction_pressure,
       latest.discharge_pressure ?? nominal.discharge_pressure,
       latest.flow_rate ?? nominal.flow_rate,
       latest.vibration_rms ?? nominal.vibration_rms,
+      latest.temperature ?? nominal.temperature,
+      latest.rpm ?? nominal.rpm,
       slopeSuct,
       slopeVib,
       slopeFlow,
       slopeDisc,
+      slopeTemp,
       stdSuct,
       stdVib,
-      suctionVaporMargin,
       headDiff,
-      flowDevPct
+      vibToFlow
     ];
 
     const sequenceSummary = {
@@ -141,11 +140,11 @@ class SequenceMLEngine {
       slope_vibration: +slopeVib.toFixed(4),
       slope_flow: +slopeFlow.toFixed(3),
       slope_discharge: +slopeDisc.toFixed(4),
+      slope_temperature: +slopeTemp.toFixed(4),
       std_suction: +stdSuct.toFixed(4),
       std_vibration: +stdVib.toFixed(4),
-      suction_vapor_margin: +suctionVaporMargin.toFixed(3),
       head_diff: +headDiff.toFixed(3),
-      flow_deviation_pct: +flowDevPct.toFixed(1)
+      vib_to_flow_ratio: +vibToFlow.toFixed(2)
     };
 
     return { rawVector, sequenceSummary, latest };
@@ -212,9 +211,9 @@ class SequenceMLEngine {
 
     // Map to 3-tier SCADA risk level: 0 (Normal), 1 (Warning), 2 (Critical Alarm)
     let riskLevel = 0;
-    if (bestClassIdx === 3 || cavitationProbability >= 0.80) {
+    if (bestClassIdx === 3 || cavitationProbability >= 0.75) {
       riskLevel = 2; // Critical Alarm (Severe Cavitation)
-    } else if (bestClassIdx >= 1 || cavitationProbability >= 0.35) {
+    } else if (bestClassIdx >= 1 || cavitationProbability >= 0.40) {
       riskLevel = 1; // Warning (Incipient or Developing Cavitation)
     } else {
       riskLevel = 0; // Normal
@@ -241,27 +240,27 @@ class SequenceMLEngine {
     }
 
     // Sequence Feature Attributions
-    // Evaluate which sequence patterns pushed cavitation score UP
     const attributions = [];
     const featureLabels = {
-      current_suction: { label: 'Suction Pressure', unit: 'bar', desc: 'Current inlet pressure level' },
-      current_discharge: { label: 'Discharge Pressure', unit: 'bar', desc: 'Current outlet pressure' },
+      current_suction: { label: 'Suction Pressure', unit: 'bar', desc: 'Inlet pressure level' },
+      current_discharge: { label: 'Discharge Pressure', unit: 'bar', desc: 'Outlet pressure level' },
       current_flow: { label: 'Flow Rate', unit: 'm³/h', desc: 'Operating flow' },
-      current_vibration: { label: 'Vibration RMS', unit: 'mm/s', desc: 'Overall machine vibration' },
-      slope_suction: { label: 'Suction Drift Slope', unit: 'bar/s', desc: 'Rate of suction pressure decline' },
+      current_vibration: { label: 'Vibration RMS', unit: 'mm/s', desc: 'Machine overall vibration' },
+      current_temperature: { label: 'Bearing Temperature', unit: '°C', desc: 'Bearing operating temperature' },
+      current_rpm: { label: 'Shaft Speed', unit: 'RPM', desc: 'Rotational speed' },
+      slope_suction: { label: 'Suction Drift Slope', unit: 'bar/s', desc: 'Rate of suction pressure change' },
       slope_vibration: { label: 'Vibration Trend Slope', unit: 'mm/s per s', desc: 'Rate of vibration escalation' },
-      slope_flow: { label: 'Flow Rate Trend', unit: 'm³/h/s', desc: 'Volumetric flow rate trajectory' },
-      slope_discharge: { label: 'Discharge Slope', unit: 'bar/s', desc: 'Rate of head decline' },
-      std_suction: { label: 'Suction Pressure Ripple', unit: 'bar', desc: 'Pressure instability & pulsations' },
-      std_vibration: { label: 'Vibration RMS Fluctuation', unit: 'mm/s', desc: 'RMS vibration variability' },
-      suction_vapor_margin: { label: 'Vapor Pressure Margin', unit: 'bar', desc: 'Margin above liquid vapor pressure' },
-      head_diff: { label: 'Differential Head ΔP', unit: 'bar', desc: 'Pressure generated across pump' },
-      flow_deviation_pct: { label: 'Flow Deviation', unit: '%', desc: 'Deviation from nominal BEP flow' }
+      slope_flow: { label: 'Flow Rate Trend', unit: 'm³/h/s', desc: 'Volumetric flow trajectory' },
+      slope_discharge: { label: 'Discharge Slope', unit: 'bar/s', desc: 'Head pressure rate of change' },
+      slope_temperature: { label: 'Thermal Slope', unit: '°C/s', desc: 'Rate of temperature change' },
+      std_suction: { label: 'Suction Pressure Ripple', unit: 'bar', desc: 'Pressure instability pulsations' },
+      std_vibration: { label: 'Vibration Fluctuation', unit: 'mm/s', desc: 'Turbulence variability' },
+      head_diff: { label: 'Differential Pressure ΔP', unit: 'bar', desc: 'Pump developed head' },
+      vib_to_flow_ratio: { label: 'Vibration/Flow Index', unit: '', desc: 'Kinematic turbulence density' }
     };
 
     for (let j = 0; j < this.model.features.length; j++) {
       const fKey = this.model.features[j];
-      // Cavitation sensitivity weight: weighted sum across cavitation classes (incipient, developing, severe)
       const cavWeight = (
         0.35 * this.model.weights[1][j] +
         0.70 * this.model.weights[2][j] +
@@ -281,7 +280,6 @@ class SequenceMLEngine {
       });
     }
 
-    // Sort by absolute score impact descending
     attributions.sort((a, b) => Math.abs(b.score_change) - Math.abs(a.score_change));
 
     return {
@@ -308,15 +306,16 @@ class SequenceMLEngine {
 }
 
 /**
- * Intelligent Alert Engine with Sequence Persistence & Anti-Chatter Hysteresis
+ * Intelligent Alert Engine with Sequence Persistence
+ * Generates alerts STRICTLY from persistent model predictions or hardware signal dropout.
+ * NEVER inspects actuator state or injected scenario labels.
  */
 class AlertManager {
   constructor(options = {}) {
     this.config = {
       confidence_threshold_critical: options.confidence_threshold_critical ?? 0.70,
-      confidence_threshold_warning: options.confidence_threshold_warning ?? 0.45,
-      persistence_windows: options.persistence_windows ?? 3, // At least 3 consecutive seconds of evidence
-      clear_windows: options.clear_windows ?? 5              // At least 5 consecutive normal seconds to resolve
+      confidence_threshold_warning: options.confidence_threshold_warning ?? 0.40,
+      persistence_windows: options.persistence_windows ?? 3 // At least 3 consecutive seconds of evidence
     };
     this.reset();
   }
@@ -337,14 +336,10 @@ class AlertManager {
     if (newCfg.persistence_windows !== undefined) {
       this.config.persistence_windows = Math.max(1, Math.min(15, parseInt(newCfg.persistence_windows, 10)));
     }
-    if (newCfg.clear_windows !== undefined) {
-      this.config.clear_windows = Math.max(2, Math.min(30, parseInt(newCfg.clear_windows, 10)));
-    }
   }
 
   /**
    * Evaluate alerts based strictly on sequence model predictions and hardware errors.
-   * Never inspects injected fault labels.
    */
   evaluate(ts, sim_t, pumpId, pred, dataError, alertsHistory, nextIdCounter) {
     let nextId = nextIdCounter;
@@ -442,9 +437,6 @@ class AlertManager {
       }
     }
 
-    // 4. Alert Lifecycle: In accordance with industrial SCADA safety standards,
-    // alerts NEVER automatically vanish or auto-resolve. Once triggered by confirmed
-    // telemetry evidence, alerts remain latched in Active Alerts until explicitly resolved by the operator.
     return nextId;
   }
 }
@@ -454,6 +446,5 @@ module.exports = {
   AlertManager,
   NOMINAL_DEFAULT,
   calculateSlope,
-  calculateStd,
-  getVaporPressure
+  calculateStd
 };

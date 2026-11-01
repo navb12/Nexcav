@@ -59,12 +59,19 @@ export interface ThresholdBreach {
   operator: string;
 }
 
+export interface PumpActuators {
+  suction_restriction: number;
+  bearing_wear: number;
+  discharge_throttling: number;
+  vibration_unbalance: number;
+}
+
 export interface LiveTelemetryMessage {
   type: 'reading' | 'snapshot';
   ts: string;
   sim_t: number;
   pump: string;
-  scenario: 'normal' | 'developing' | 'mild' | 'moderate' | 'severe' | 'custom';
+  scenario?: string;
   simulated: boolean;
   readings: SensorReadings;
   anomaly: 'spike' | 'dropout' | null;
@@ -79,6 +86,7 @@ export interface LiveTelemetryMessage {
   speed?: number;
   interval?: number;
   scenario_severity?: number;
+  actuators?: PumpActuators;
   active_faults?: string[];
   phase?: string;
 }
@@ -98,6 +106,11 @@ export interface AlertItem {
   status: 'active' | 'acknowledged' | 'resolved';
   ack_ts: string | null;
   resolved_ts: string | null;
+  validation?: {
+    classification: 'confirmed_cavitation' | 'false_positive' | 'missed_fault' | 'confirmed_normal';
+    notes?: string;
+    timestamp: string;
+  };
 }
 
 export interface FeatureAttribution {

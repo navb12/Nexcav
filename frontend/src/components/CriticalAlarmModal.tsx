@@ -6,13 +6,15 @@ interface CriticalAlarmModalProps {
   readings: SensorReadings;
   onAcknowledge: () => void;
   onResolve: () => void;
+  onValidate?: (classification: 'confirmed_cavitation' | 'false_positive' | 'missed_fault') => void;
 }
 
 export const CriticalAlarmModal: React.FC<CriticalAlarmModalProps> = ({
   alert,
   readings,
   onAcknowledge,
-  onResolve
+  onResolve,
+  onValidate
 }) => {
   const vibVal = readings.vibration_rms !== null ? readings.vibration_rms.toFixed(2) : '8.42';
   const suctionVal = readings.suction_pressure !== null ? readings.suction_pressure.toFixed(2) : '0.62';
@@ -38,7 +40,7 @@ export const CriticalAlarmModal: React.FC<CriticalAlarmModalProps> = ({
         boxShadow: '0 0 35px rgba(239, 68, 68, 0.35), 0 20px 40px rgba(0, 0, 0, 0.8)',
         borderRadius: '6px',
         width: '100%',
-        maxWidth: '540px',
+        maxWidth: '560px',
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column'
@@ -86,7 +88,7 @@ export const CriticalAlarmModal: React.FC<CriticalAlarmModalProps> = ({
             fontFamily: 'monospace',
             letterSpacing: '0.5px'
           }}>
-            ACTIVE
+            ACTIVE SCADA ALARM
           </div>
         </div>
 
@@ -98,20 +100,13 @@ export const CriticalAlarmModal: React.FC<CriticalAlarmModalProps> = ({
           gap: '2px'
         }}>
           <div style={{
-            fontSize: '12px',
-            fontWeight: 700,
-            color: '#f87171',
-            fontFamily: 'monospace'
-          }}>
-            Severe Cavitation
-          </div>
-          <div style={{
             fontSize: '11px',
-            color: 'var(--text-muted)',
             fontFamily: 'monospace',
-            letterSpacing: '0.4px'
+            color: 'var(--text-muted)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.5px'
           }}>
-            PUMP P-001 · LIVE SIMULATION
+            PUMP P-001 · MODEL SEQUENCE DETECTION (CONFIDENCE: {alert.model_score ? (alert.model_score * 100).toFixed(0) : 95}%)
           </div>
         </div>
 
@@ -122,7 +117,7 @@ export const CriticalAlarmModal: React.FC<CriticalAlarmModalProps> = ({
           color: 'var(--text-primary)',
           lineHeight: '1.5'
         }}>
-          {alert.explanation || 'Cavitation levels have exceeded the critical operating threshold. Abnormal pressure fluctuations and increased vibration detected.'}
+          {alert.explanation || 'Cavitation levels have exceeded the critical operating threshold. Severe suction pressure collapse and turbulent vibration escalation detected by sequence inference.'}
         </div>
 
         {/* Diagnostic Sensor Metrics Grid */}
@@ -176,44 +171,69 @@ export const CriticalAlarmModal: React.FC<CriticalAlarmModalProps> = ({
             padding: '8px 10px'
           }}>
             <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontFamily: 'monospace' }}>
-              Severity
+              Severity Level
             </div>
             <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--status-critical)', fontFamily: 'monospace', marginTop: '2px' }}>
               Critical
             </div>
             <div style={{ fontSize: '9px', color: '#f87171', marginTop: '1px' }}>
-              Zone D Breakdown
+              Persistent Evidence
             </div>
           </div>
         </div>
 
-        {/* Alarm Status & Unacknowledged Callout */}
-        <div style={{
-          margin: '0 18px 14px',
-          backgroundColor: 'rgba(239, 68, 68, 0.08)',
-          border: '1px solid rgba(239, 68, 68, 0.25)',
-          borderRadius: '4px',
-          padding: '8px 12px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          fontSize: '11px',
-          fontFamily: 'monospace'
-        }}>
-          <span style={{ color: 'var(--text-secondary)' }}>
-            Alarm status: <strong style={{ color: '#fca5a5' }}>Unacknowledged</strong>
-          </span>
-          <span style={{
-            color: 'var(--status-critical)',
-            fontWeight: 700,
-            fontSize: '10px',
-            backgroundColor: 'rgba(239, 68, 68, 0.2)',
-            padding: '1px 6px',
-            borderRadius: '2px'
+        {/* Operator Incident Validation Classification */}
+        {onValidate && (
+          <div style={{
+            margin: '0 18px 10px',
+            padding: '8px 12px',
+            backgroundColor: 'var(--bg-surface-subtle)',
+            border: '1px dashed var(--border-medium)',
+            borderRadius: '4px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '8px'
           }}>
-            ACTIVE
-          </span>
-        </div>
+            <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>
+              Ground-Truth Validation:
+            </span>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button
+                onClick={() => onValidate('confirmed_cavitation')}
+                style={{
+                  backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                  color: 'var(--status-normal)',
+                  border: '1px solid var(--status-normal)',
+                  padding: '3px 8px',
+                  borderRadius: '3px',
+                  fontSize: '10.5px',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+                title="Classify this alarm as a genuine confirmed cavitation detection"
+              >
+                ✓ Confirm Cavitation
+              </button>
+              <button
+                onClick={() => onValidate('false_positive')}
+                style={{
+                  backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                  color: 'var(--status-critical)',
+                  border: '1px solid var(--status-critical)',
+                  padding: '3px 8px',
+                  borderRadius: '3px',
+                  fontSize: '10.5px',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+                title="Classify this alarm as a False Positive for ML model retraining"
+              >
+                ✗ False Positive
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Action Buttons */}
         <div style={{
@@ -221,47 +241,52 @@ export const CriticalAlarmModal: React.FC<CriticalAlarmModalProps> = ({
           borderTop: '1px solid var(--border-subtle)',
           padding: '12px 18px',
           display: 'flex',
-          justifyContent: 'flex-end',
+          justifyContent: 'space-between',
+          alignItems: 'center',
           gap: '10px'
         }}>
-          <button
-            onClick={onResolve}
-            style={{
-              backgroundColor: 'transparent',
-              color: 'var(--status-normal)',
-              border: '1px solid var(--status-normal)',
-              padding: '7px 14px',
-              borderRadius: '3px',
-              fontSize: '11px',
-              fontWeight: 700,
-              cursor: 'pointer'
-            }}
-            title="Resolve the underlying fault and clear alarm"
-          >
-            Resolve Fault
-          </button>
+          <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+            Note: Resolving alert clears alarm. Pump requires physical repair to restore nominal state.
+          </span>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={onResolve}
+              style={{
+                backgroundColor: 'transparent',
+                color: 'var(--status-normal)',
+                border: '1px solid var(--status-normal)',
+                padding: '7px 12px',
+                borderRadius: '3px',
+                fontSize: '11px',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+              title="Resolve this alert record"
+            >
+              Resolve Alert
+            </button>
 
-          <button
-            onClick={onAcknowledge}
-            style={{
-              backgroundColor: 'var(--status-critical)',
-              color: '#ffffff',
-              border: 'none',
-              padding: '7px 18px',
-              borderRadius: '3px',
-              fontSize: '11px',
-              fontWeight: 800,
-              letterSpacing: '0.4px',
-              cursor: 'pointer',
-              boxShadow: '0 2px 8px rgba(239, 68, 68, 0.4)'
-            }}
-            title="Silence and dismiss popup. Underlying fault will remain active."
-          >
-            Acknowledge Alarm
-          </button>
+            <button
+              onClick={onAcknowledge}
+              style={{
+                backgroundColor: 'var(--status-critical)',
+                color: '#ffffff',
+                border: 'none',
+                padding: '7px 16px',
+                borderRadius: '3px',
+                fontSize: '11px',
+                fontWeight: 800,
+                letterSpacing: '0.4px',
+                cursor: 'pointer',
+                boxShadow: '0 2px 8px rgba(239, 68, 68, 0.4)'
+              }}
+              title="Silence and dismiss popup. Alert will remain tracked in Active Alerts."
+            >
+              Acknowledge Alarm
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
 };
-

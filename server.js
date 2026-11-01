@@ -1,15 +1,13 @@
 /**
- * NEXCAV - Standalone Industrial Pump Cavitation Backend Server
- * Zero external dependencies (uses Node built-in http, crypto, fs, url)
+ * NEXCAV - Standalone Industrial Pump Predictive Maintenance Server
  * 
- * Features:
- * - Deterministic, physically consistent pump simulation
- * - 4 distinct scenarios: Normal, Mild Cavitation, Moderate Cavitation, Severe Cavitation
- * - Consistent sensor readings and risk level per scenario
- * - Persistent alerts with latching alarm logic (no 2-second vanishing)
- * - Calibrated cavitation prediction model & baseline attribution
- * - RFC 6455 WebSocket streaming on ws://127.0.0.1:8000/ws/live
- * - Complete REST API compatible with the NEXCAV frontend
+ * Architecture:
+ * 1. Physical Pump Simulation Engine (hydrodynamics, NPSH, affinity laws, physical actuators)
+ * 2. Actuation & Maintenance System (physical condition control, zero alert generation)
+ * 3. Independent Sequence ML Engine (telemetry-only inference, zero actuator leakage)
+ * 4. Model-Driven Alert Manager (temporal persistence, latching SCADA alerts)
+ * 5. Incident Ground-Truth Validation & Retraining Engine (operator classifications, independent holdout)
+ * 6. High-Performance RFC 6455 WebSocket Streaming
  */
 
 const http = require('http');
@@ -19,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { SequenceMLEngine, AlertManager } = require('./app/ml/sequence_engine');
+const { trainModel } = require('./training/train_time_series_model');
 
 const PORT = 8000;
 const HOST = '0.0.0.0';
@@ -26,12 +25,11 @@ const HOST = '0.0.0.0';
 const mlEngine = new SequenceMLEngine();
 const alertMgr = new AlertManager({
   confidence_threshold_critical: 0.70,
-  confidence_threshold_warning: 0.45,
-  persistence_windows: 3,
-  clear_windows: 5
+  confidence_threshold_warning: 0.40,
+  persistence_windows: 3 // At least 3 consecutive seconds of persistent ML evidence
 });
 
-// Chronological 30-sample rolling window for sequence model inference
+// Chronological 30-sample rolling window for sequence model inference (strictly sensor telemetry)
 const telemetry_window_30 = [];
 // Chronological 60-sample history of predictions for dashboard trend visualization
 const prediction_history_60 = [];
@@ -55,57 +53,30 @@ function createRNG(seed = 42) {
 
 const RAW_SENSORS = ['suction_pressure', 'discharge_pressure', 'flow_rate', 'vibration_rms', 'temperature', 'rpm'];
 
-// Engineering Parameters per Scenario (Consistent and physically grounded)
-const SCENARIO_PARAMS = {
-  normal: {
-    label: 'Normal Operation',
-    sev: 0.05,
-    suction: 2.05,
-    discharge: 6.52,
-    flow: 100.2,
-    vib: 1.85,
-    temp: 52.5,
-    rpm: 2950,
-    noise: { suction: 0.015, discharge: 0.025, flow: 0.6, vib: 0.08, temp: 0.2, rpm: 4 }
-  },
-  mild: {
-    label: 'Mild Cavitation',
-    sev: 0.65,
-    suction: 1.42,
-    discharge: 6.25,
-    flow: 94.8,
-    vib: 3.65,
-    temp: 55.8,
-    rpm: 2948,
-    noise: { suction: 0.02, discharge: 0.035, flow: 0.9, vib: 0.15, temp: 0.3, rpm: 5 }
-  },
-  moderate: {
-    label: 'Moderate Cavitation',
-    sev: 1.35,
-    suction: 1.05,
-    discharge: 5.65,
-    flow: 85.5,
-    vib: 5.45,
-    temp: 62.2,
-    rpm: 2942,
-    noise: { suction: 0.03, discharge: 0.05, flow: 1.4, vib: 0.25, temp: 0.4, rpm: 7 }
-  },
-  severe: {
-    label: 'Severe Cavitation',
-    sev: 2.00,
-    suction: 0.62,
-    discharge: 4.35,
-    flow: 71.8,
-    vib: 8.35,
-    temp: 72.5,
-    rpm: 2930,
-    noise: { suction: 0.035, discharge: 0.07, flow: 1.8, vib: 0.35, temp: 0.5, rpm: 9 }
-  }
+/**
+ * Engineering Simulation Assumptions & Physical Nominal Parameters:
+ * - Working fluid: Clean water, density rho = 1000 kg/m3, gravity g = 9.81 m/s2
+ * - Operating pressure:
+ *     Suction: 2.05 bar(abs) / 1.04 bar(gauge)
+ *     Discharge: 6.52 bar(abs) / 5.51 bar(gauge)
+ *     Nominal developed head: ~4.47 bar (~45.6 m water column)
+ * - Nominal flow rate at Best Efficiency Point (BEP): 100.2 m3/h (~0.0278 m3/s)
+ * - Nominal shaft speed: 2950 RPM (~308.9 rad/s, 2-pole 50 Hz induction motor)
+ * - Nominal vibration: 1.85 mm/s RMS (ISO 10816-3 Class I/II rigid foundation normal)
+ * - Nominal bearing temperature: 52.5 deg C
+ * - Cavitation margin: NPSHr = 3.2 m at rated flow.
+ * Note: These hydrodynamic constants are operational simulation assumptions.
+ */
+const NOMINAL_SPEC = {
+  suction_pressure: 2.05,
+  discharge_pressure: 6.52,
+  flow_rate: 100.2,
+  vibration_rms: 1.85,
+  temperature: 52.5,
+  rpm: 2950.0
 };
 
-// Aliases for compatibility
-SCENARIO_PARAMS['developing'] = SCENARIO_PARAMS['mild'];
-
+// Simulation State
 const sim = {
   running: true,
   speed: 1.0,
@@ -114,22 +85,20 @@ const sim = {
   pump_name: 'Primary Process Centrifugal Pump',
   seed: 42,
   pending_anomaly: null,
-  scenario: 'normal',
-  active_faults: new Set(),
-  phase: 'normal',
   tick: 0,
   sim_t: 0.0,
-  current_sev: 0.05,
-  last: null,
   rng: createRNG(42),
-  nominal: {
-    suction_pressure: 2.05,
-    discharge_pressure: 6.52,
-    flow_rate: 100.2,
-    vibration_rms: 1.85,
-    temperature: 52.5,
-    rpm: 2950.0
-  }
+  nominal: { ...NOMINAL_SPEC },
+  // Continuous Physical Actuator State (0.0 = nominal healthy, 1.0 = maximum degradation)
+  actuators: {
+    suction_restriction: 0.0,  // Inlet valve throttling / clogged suction strainer
+    bearing_wear: 0.0,         // Mechanical friction raceway wear & heating
+    discharge_throttling: 0.0, // Downstream throttling valve
+    vibration_unbalance: 0.0   // Rotor unbalance / mechanical misalignment
+  },
+  // Legacy preset tracker for UI badge compatibility
+  active_presets: new Set(),
+  last: null
 };
 
 const sensor_thresholds = {
@@ -143,263 +112,90 @@ const sensor_thresholds = {
 // In-Memory Database Storage
 const readings_history = [];
 const alerts_history = [];
-const events_history = [];
+const validated_incidents = [];
 let next_alert_id = 1;
 
 function nowISO() {
   return new Date().toISOString();
 }
 
-// Fault Definitions for Persistent Manual Injection & Multi-Fault Synthesis
-const FAULT_DEFINITIONS = {
-  severe_cavitation: {
-    id: 'severe_cavitation',
-    name: 'Severe Cavitation',
-    category: 'CRITICAL: CAVITATION DETECTED',
-    severity: 2,
-    source: 'model',
-    d_suction: -1.43,
-    d_discharge: -2.17,
-    d_flow: -28.4,
-    d_vib: 6.57,
-    d_temp: 20.0,
-    d_rpm: -20,
-    twin_severity: 2.00,
-    explanation: 'Cavitation levels have exceeded the critical operating threshold. Severe suction pressure collapse and turbulent vibration escalation detected.',
-    action: 'IMMEDIATE ACTION: Throttle discharge valve or increase suction head. Inspect inlet strainers to prevent catastrophic impeller destruction.'
-  },
-  developing_cavitation: {
-    id: 'developing_cavitation',
-    name: 'Developing Cavitation',
-    category: 'Cavitation Detected: Developing Pattern',
-    severity: 1,
-    source: 'model',
-    d_suction: -1.00,
-    d_discharge: -0.87,
-    d_flow: -14.7,
-    d_vib: 3.60,
-    d_temp: 9.7,
-    d_rpm: -8,
-    twin_severity: 1.35,
-    explanation: 'Developing cavitation: Pronounced suction pressure fluctuations, head loss, and elevated turbulence around impeller vanes.',
-    action: 'Verify inlet suction pressure and liquid level. Monitor vibration trend.'
-  },
-  bearing_wear: {
-    id: 'bearing_wear',
-    name: 'Bearing Wear',
-    category: 'Bearing Mechanical Wear & Friction Overheating',
-    severity: 1,
-    source: 'sensor',
-    d_suction: 0.0,
-    d_discharge: 0.0,
-    d_flow: 0.0,
-    d_vib: 3.20,
-    d_temp: 21.5,
-    d_rpm: -18,
-    twin_severity: 0.85,
-    explanation: 'Bearing raceway degradation and mechanical friction. Elevated bearing temperature and high-frequency harmonics.',
-    action: 'Inspect lubrication oil level, check bearing raceways, and schedule maintenance.'
-  },
-  pressure_drop: {
-    id: 'pressure_drop',
-    name: 'Pressure Drop',
-    category: 'Critical Suction Pressure Drop',
-    severity: 1,
-    source: 'sensor',
-    d_suction: -1.35,
-    d_discharge: -1.60,
-    d_flow: -18.5,
-    d_vib: 1.80,
-    d_temp: 0.0,
-    d_rpm: -5,
-    twin_severity: 1.00,
-    explanation: 'Sudden inlet restriction or strainer clogging causing severe suction pressure loss and depleted NPSHa margin.',
-    action: 'Switch to standby suction strainer and inspect inlet piping for restriction.'
-  }
-};
-
-// Synchronize Active Alerts with Active Injected Faults
-function syncActiveFaultAlerts(ts, d) {
-  for (const faultId of sim.active_faults) {
-    const fDef = FAULT_DEFINITIONS[faultId];
-    if (!fDef) continue;
-
-    const existing = alerts_history.find(a => (a.fault_id === faultId || a.category === fDef.category) && a.status !== 'resolved');
-    if (!existing) {
-      alerts_history.unshift({
-        id: next_alert_id++,
-        fault_id: faultId,
-        ts,
-        pump: sim.pump_id,
-        source: fDef.source,
-        category: fDef.category,
-        severity: fDef.severity,
-        predicted_class: fDef.name,
-        model_score: fDef.severity === 2 ? 0.94 : 0.65,
-        readings: JSON.stringify({ reading: d }),
-        explanation: fDef.explanation,
-        action: fDef.action,
-        status: 'active',
-        injected_ts: ts,
-        ack_ts: null,
-        resolved_ts: null
-      });
-    }
-  }
-}
-
-// Explicit Individual Fault Resolution
-function resolveFault(faultId) {
-  sim.active_faults.delete(faultId);
-  const fDef = FAULT_DEFINITIONS[faultId];
-  const now = nowISO();
-
-  for (const a of alerts_history) {
-    if (a.status !== 'resolved') {
-      if (a.fault_id === faultId || (fDef && a.category === fDef.category)) {
-        a.status = 'resolved';
-        a.resolved_ts = now;
-      }
-    }
-  }
-}
-
-// Explicit Individual Alert Resolution
-function resolveAlert(alertId) {
-  const alert = alerts_history.find(a => a.id === alertId);
-  if (!alert) return null;
-
-  alert.status = 'resolved';
-  alert.resolved_ts = nowISO();
-
-  let matchedFault = alert.fault_id;
-  if (!matchedFault) {
-    for (const [fId, fDef] of Object.entries(FAULT_DEFINITIONS)) {
-      if (alert.category === fDef.category || alert.category.includes(fDef.name)) {
-        matchedFault = fId;
-        break;
-      }
-    }
-  }
-
-  if (matchedFault) {
-    sim.active_faults.delete(matchedFault);
-  }
-  return alert;
-}
-
-// Generate Realistic Telemetry with strictly user-controlled fault states (ZERO autonomous progression)
+/**
+ * Generate Continuous Physical Telemetry from Hydrodynamic Model
+ * Superimposes independent physical effects:
+ * - Suction restriction alters inlet head and margin above vapor pressure
+ * - When NPSHa < NPSHr, physical cavitation naturally emerges (turbulence, head loss, vibration surge)
+ * - Bearing wear generates mechanical friction heating and high-frequency vibration harmonics
+ * - Discharge throttling shifts the operating point on the pump performance curve
+ */
 function generateTelemetry() {
   const r = sim.rng;
+  const nom = sim.nominal;
+  const act = sim.actuators;
 
-  // Base state is STRICTLY healthy nominal baseline (No autonomous progression or deterioration timers)
-  let targetSuction = sim.nominal.suction_pressure;
-  let targetDischarge = sim.nominal.discharge_pressure;
-  let targetFlow = sim.nominal.flow_rate;
-  let targetTemp = sim.nominal.temperature;
-  let targetRpm = sim.nominal.rpm;
+  // 1. Suction Pressure Calculation (Inlet Line Hydraulics)
+  // Progressive inlet throttling causes parabolic head loss
+  const suctionDrop = -1.45 * act.suction_restriction - 0.22 * Math.pow(act.suction_restriction, 2);
+  const targetSuction = Math.max(0.18, nom.suction_pressure + suctionDrop);
 
-  let cavDeltaSuct = 0;
-  let cavDeltaDisc = 0;
-  let cavDeltaFlow = 0;
-  let cavDeltaVib = 0;
-  let cavDeltaTemp = 0;
-  let cavDeltaRpm = 0;
+  // 2. Thermodynamic Fluid Vapor Pressure (Antoine Equation for clean water)
+  // Operating temperature affects vapor pressure: higher temp -> higher P_vap -> less cavitation margin
+  const estTemp = nom.temperature + 26.0 * act.bearing_wear;
+  const pVap = Math.min(0.85, Math.max(0.06, 0.123 * Math.exp(0.035 * (estTemp - 50.0))));
 
-  let dropDeltaSuct = 0;
-  let dropDeltaDisc = 0;
-  let dropDeltaFlow = 0;
-  let dropDeltaVib = 0;
-  let dropDeltaRpm = 0;
+  // 3. Internal Physical Cavitation Emergence
+  // Total suction head includes dynamic impeller eye acceleration loss:
+  // NPSHa_eye = (P_suct - P_vap) * 1e5 / (rho * g) - dynamic_eye_loss (~8.5 m)
+  const grossHead = Math.max(0.1, ((targetSuction - pVap) * 1e5) / (1000 * 9.81));
+  const dynamicEyeLoss = 8.5; // Dynamic acceleration head into impeller eye (m)
+  const npsha = Math.max(0.05, grossHead - dynamicEyeLoss);
+  const npshr = 3.20; // NPSHr at nominal flow
+  const cavDeficit = Math.max(0, npshr - npsha);
+  // Physical Cavitation Severity Index (0.0 = none, 1.0 = moderate, 2.0 = severe)
+  const physicalCavIntensity = Math.min(2.0, cavDeficit / 2.2);
 
-  let brgDeltaTemp = 0;
-  let brgDeltaVib = 0;
-  let brgDeltaRpm = 0;
+  // 4. Flow Rate & Discharge Pressure (Pump Head-Flow Characteristic Curve)
+  // Discharge throttling reduces flow and increases shutoff head
+  const flowDropThrottling = -38.0 * act.discharge_throttling;
+  const headRiseThrottling = +0.48 * act.discharge_throttling;
 
-  let maxTwinSev = 0.05;
-  let currentPhase = 'normal';
+  // Cavitation bubble formation causes hydraulic vapor blockage and head drop
+  const flowDropCav = -18.5 * physicalCavIntensity;
+  const headDropCav = -1.35 * Math.pow(physicalCavIntensity, 1.15);
 
-  // 1. Cavitation faults (Severe takes precedence if both selected):
-  if (sim.active_faults.has('severe_cavitation')) {
-    const f = FAULT_DEFINITIONS.severe_cavitation;
-    cavDeltaSuct = f.d_suction;
-    cavDeltaDisc = f.d_discharge;
-    cavDeltaFlow = f.d_flow;
-    cavDeltaVib = f.d_vib;
-    cavDeltaTemp = f.d_temp;
-    cavDeltaRpm = f.d_rpm;
-    maxTwinSev = Math.max(maxTwinSev, f.twin_severity);
-    currentPhase = 'severe';
-  } else if (sim.active_faults.has('developing_cavitation')) {
-    const f = FAULT_DEFINITIONS.developing_cavitation;
-    cavDeltaSuct = f.d_suction;
-    cavDeltaDisc = f.d_discharge;
-    cavDeltaFlow = f.d_flow;
-    cavDeltaVib = f.d_vib;
-    cavDeltaTemp = f.d_temp;
-    cavDeltaRpm = f.d_rpm;
-    maxTwinSev = Math.max(maxTwinSev, f.twin_severity);
-    currentPhase = 'developing';
-  }
+  const targetFlow = Math.max(12.0, nom.flow_rate + flowDropThrottling + flowDropCav);
+  const targetDischarge = Math.max(1.0, nom.discharge_pressure + headRiseThrottling + headDropCav);
 
-  // 2. Pressure Drop fault:
-  if (sim.active_faults.has('pressure_drop')) {
-    const f = FAULT_DEFINITIONS.pressure_drop;
-    dropDeltaSuct = f.d_suction;
-    dropDeltaDisc = f.d_discharge;
-    dropDeltaFlow = f.d_flow;
-    dropDeltaVib = f.d_vib;
-    dropDeltaRpm = f.d_rpm;
-    maxTwinSev = Math.max(maxTwinSev, f.twin_severity);
-    if (currentPhase === 'normal') currentPhase = 'warning';
-  }
+  // 5. Vibration Sources (Root-Sum-Squared Superposition)
+  // - Machine baseline: 1.85 mm/s
+  // - Cavitation broadband shock: 4.85 * cavIntensity^1.1
+  // - Bearing raceway wear harmonics: 3.50 * bearing_wear
+  // - Mechanical unbalance: 3.80 * vibration_unbalance
+  const vibCav = physicalCavIntensity > 0.05 ? 4.85 * Math.pow(physicalCavIntensity, 1.1) : 0.0;
+  const vibBrg = 3.50 * act.bearing_wear;
+  const vibUnb = 3.80 * act.vibration_unbalance;
 
-  // 3. Bearing Wear fault:
-  if (sim.active_faults.has('bearing_wear')) {
-    const f = FAULT_DEFINITIONS.bearing_wear;
-    brgDeltaTemp = f.d_temp;
-    brgDeltaVib = f.d_vib;
-    brgDeltaRpm = f.d_rpm;
-    maxTwinSev = Math.max(maxTwinSev, f.twin_severity);
-    if (currentPhase === 'normal') currentPhase = 'warning';
-  }
-
-  // Multi-fault Superposition Calculations:
-  // Suction: Compounded drop if both cavitation and inlet restriction are active
-  const combinedSuctDrop = cavDeltaSuct + (dropDeltaSuct !== 0 ? (cavDeltaSuct !== 0 ? dropDeltaSuct * 0.4 : dropDeltaSuct) : 0);
-  targetSuction = Math.max(0.18, sim.nominal.suction_pressure + combinedSuctDrop);
-
-  // Discharge: Combined head loss
-  targetDischarge = Math.max(1.0, sim.nominal.discharge_pressure + cavDeltaDisc + dropDeltaDisc);
-
-  // Flow rate: Combined volumetric drop
-  const combinedFlowDrop = cavDeltaFlow + (dropDeltaFlow !== 0 ? (cavDeltaFlow !== 0 ? dropDeltaFlow * 0.4 : dropDeltaFlow) : 0);
-  targetFlow = Math.max(15.0, sim.nominal.flow_rate + combinedFlowDrop);
-
-  // Temperature: Bearing friction + casing heating
-  targetTemp = Math.min(95.0, sim.nominal.temperature + cavDeltaTemp + brgDeltaTemp);
-
-  // RPM: Combined mechanical drag
-  targetRpm = Math.max(1200, sim.nominal.rpm + cavDeltaRpm + brgDeltaRpm + dropDeltaRpm);
-
-  // Vibration: Root-sum-squared superposition of independent vibration sources
   const targetVib = Math.sqrt(
-    Math.pow(sim.nominal.vibration_rms, 2) +
-    Math.pow(cavDeltaVib, 2) +
-    Math.pow(brgDeltaVib, 2) +
-    Math.pow(dropDeltaVib, 2)
+    Math.pow(nom.vibration_rms, 2) +
+    Math.pow(vibCav, 2) +
+    Math.pow(vibBrg, 2) +
+    Math.pow(vibUnb, 2)
   );
 
-  sim.current_sev = maxTwinSev;
-  sim.phase = currentPhase;
+  // 6. Thermal Accumulation (Bearing friction + cavitation turbulence heating)
+  const targetTemp = Math.min(98.0, nom.temperature + 26.0 * act.bearing_wear + 5.5 * physicalCavIntensity);
 
-  // Controlled measurement noise (constant while in steady state, no artificial escalation)
+  // 7. Shaft Speed (Electromechanical slip & hydrodynamic drag)
+  const targetRpm = Math.max(1200, nom.rpm - 18 * act.bearing_wear - 14 * physicalCavIntensity);
+
+  // 8. Continuous Micro-Turbulence & Measurement Fluctuations
+  // Turbulence increases dynamically when cavitating
+  const noiseScale = 1.0 + 1.5 * physicalCavIntensity;
   const noise = {
-    suction: sim.active_faults.has('severe_cavitation') ? 0.035 : 0.015,
-    discharge: sim.active_faults.has('severe_cavitation') ? 0.06 : 0.025,
-    flow: sim.active_faults.has('severe_cavitation') ? 1.6 : 0.6,
-    vib: sim.active_faults.has('severe_cavitation') ? 0.35 : sim.active_faults.has('developing_cavitation') ? 0.22 : 0.08,
-    temp: 0.2,
+    suction: 0.015 * noiseScale,
+    discharge: 0.025 * noiseScale,
+    flow: 0.60 * noiseScale,
+    vib: 0.08 + 0.15 * physicalCavIntensity + 0.05 * act.bearing_wear,
+    temp: 0.20,
     rpm: 3.5
   };
 
@@ -407,7 +203,7 @@ function generateTelemetry() {
   const suction = targetSuction + r.normal(0, noise.suction);
   const discharge = targetDischarge + r.normal(0, noise.discharge) + 0.01 * z;
   const flow = targetFlow + r.normal(0, noise.flow) + 0.2 * z;
-  const vibration = Math.max(0.3, targetVib + r.normal(0, noise.vib) + 0.08 * sim.current_sev * z);
+  const vibration = Math.max(0.3, targetVib + r.normal(0, noise.vib) + 0.05 * physicalCavIntensity * z);
   const temperature = targetTemp + r.normal(0, noise.temp);
   const rpm = targetRpm + r.normal(0, noise.rpm);
 
@@ -420,9 +216,9 @@ function generateTelemetry() {
     rpm: +Math.max(0, rpm).toFixed(0)
   };
 
+  // Optional transient glitch injection
   let anomaly = sim.pending_anomaly;
   sim.pending_anomaly = null;
-
   if (anomaly === 'spike') {
     d.vibration_rms = +(d.vibration_rms + 6.5).toFixed(2);
   } else if (anomaly === 'dropout') {
@@ -430,10 +226,16 @@ function generateTelemetry() {
     d[droppedKey] = null;
   }
 
-  return { d, anomaly, severity: sim.current_sev, phase: sim.phase };
+  return {
+    d,
+    anomaly,
+    physicalCavIntensity,
+    internal_npsha: +npsha.toFixed(2),
+    internal_pvap: +pVap.toFixed(3)
+  };
 }
 
-// Threshold Breach Evaluation (Auxiliary sensor limit checks)
+// Check Sensor Operational Limits (SCADA Warning/Alarm limits)
 function checkBreaches(reading) {
   const breaches = [];
   for (const [sensor, limits] of Object.entries(sensor_thresholds)) {
@@ -457,24 +259,22 @@ function checkBreaches(reading) {
   return breaches;
 }
 
-// Status Dictionary
+// Current System Status
 function getStatusDict() {
   const activeAlerts = alerts_history.filter((a) => a.pump === sim.pump_id && a.status !== 'resolved').length;
   return {
     running: sim.running,
-    scenario: sim.scenario,
     speed: sim.speed,
     interval: sim.interval,
     tick: sim.tick,
     sim_clock_s: +sim.sim_t.toFixed(1),
-    scenario_severity: +sim.current_sev.toFixed(2),
-    phase: sim.phase,
-    active_faults: Array.from(sim.active_faults),
+    actuators: { ...sim.actuators },
+    active_presets: Array.from(sim.active_presets),
     pump: { id: sim.pump_id, name: sim.pump_name },
     active_alerts: activeAlerts,
     model: {
       loaded: mlEngine.isLoaded(),
-      version: mlEngine.model ? mlEngine.model.version : 'v2.1.0-timeseries',
+      version: mlEngine.model ? mlEngine.model.version : 'v2.2.0-timeseries',
       model_type: mlEngine.model ? mlEngine.model.model_type : 'CalibratedSoftmaxSequenceClassifier',
       window_seconds: 30,
       error: null
@@ -489,7 +289,7 @@ function processTick() {
   sim.tick += 1;
   sim.sim_t += sim.interval;
 
-  const { d, anomaly, severity, phase } = generateTelemetry();
+  const { d, anomaly, physicalCavIntensity } = generateTelemetry();
   const ts = nowISO();
   let err = null;
 
@@ -500,11 +300,12 @@ function processTick() {
     }
   }
 
-  // 1. Maintain 30-sample rolling sequence buffer
+  // 1. Maintain 30-sample rolling sequence buffer of raw telemetry readings
   telemetry_window_30.push({ ...d });
   if (telemetry_window_30.length > 30) telemetry_window_30.shift();
 
   // 2. Perform sequence-based ML inference strictly on the telemetry sequence
+  // ZERO ACTUATOR OR PRESET LEAKAGE: Model receives only raw sensor telemetry!
   let pred = null;
   let model_err = null;
   if (!err) {
@@ -533,8 +334,8 @@ function processTick() {
   const status = pred ? pred.status : err ? 'Sensor/Data Error' : 'Model Unavailable';
   const breaches = checkBreaches(d);
 
-  // 4. Synchronize persistent active fault alerts & evaluate sequence model persistence
-  syncActiveFaultAlerts(ts, d);
+  // 4. Model-Driven Alert Evaluation
+  // ZERO FAULT LABELS CHECKED: AlertManager creates alerts strictly from persistent model evidence!
   next_alert_id = alertMgr.evaluate(ts, sim.sim_t, sim.pump_id, pred, err, alerts_history, next_alert_id);
 
   const activeAlerts = alerts_history.filter((a) => a.pump === sim.pump_id && a.status !== 'resolved').length;
@@ -544,15 +345,12 @@ function processTick() {
     ts: ts,
     sim_t: +sim.sim_t.toFixed(1),
     pump: sim.pump_id,
-    scenario: sim.scenario,
-    phase: sim.phase,
-    active_faults: Array.from(sim.active_faults),
     ...d,
     predicted_class: pred ? pred.predicted_class : null,
     risk_level: pred ? pred.risk_level : 0,
     model_score: pred ? pred.model_score : 0.05,
     status: status,
-    model_version: pred ? pred.model_version : (mlEngine.model ? mlEngine.model.version : 'v2.1.0-timeseries'),
+    model_version: pred ? pred.model_version : (mlEngine.model ? mlEngine.model.version : 'v2.2.0-timeseries'),
     anomaly: anomaly
   };
 
@@ -564,9 +362,6 @@ function processTick() {
     ts: ts,
     sim_t: +sim.sim_t.toFixed(1),
     pump: sim.pump_id,
-    scenario: sim.scenario,
-    phase: sim.phase,
-    active_faults: Array.from(sim.active_faults),
     simulated: true,
     readings: d,
     anomaly: anomaly,
@@ -580,73 +375,78 @@ function processTick() {
     running: sim.running,
     speed: sim.speed,
     interval: sim.interval,
-    scenario_severity: +severity.toFixed(2)
+    scenario_severity: +physicalCavIntensity.toFixed(2),
+    actuators: { ...sim.actuators },
+    active_faults: Array.from(sim.active_presets)
   };
 
   sim.last = msg;
-  broadcast(msg);
+  broadcastWS(msg);
   return msg;
 }
 
-// WebSocket RFC 6455 Framing
+// WebSocket Infrastructure
 const wsClients = new Set();
 
 function encodeWSFrame(data) {
-  const jsonStr = typeof data === 'string' ? data : JSON.stringify(data);
+  const jsonStr = JSON.stringify(data);
   const payload = Buffer.from(jsonStr, 'utf8');
-  const len = payload.length;
+  const length = payload.length;
 
   let header;
-  if (len < 126) {
-    header = Buffer.from([0x81, len]);
-  } else if (len <= 65535) {
+  if (length < 126) {
+    header = Buffer.alloc(2);
+    header[0] = 0x81;
+    header[1] = length;
+  } else if (length < 65536) {
     header = Buffer.alloc(4);
     header[0] = 0x81;
     header[1] = 126;
-    header.writeUInt16BE(len, 2);
+    header.writeUInt16BE(length, 2);
   } else {
     header = Buffer.alloc(10);
     header[0] = 0x81;
     header[1] = 127;
-    header.writeBigUInt64BE(BigInt(len), 2);
+    header.writeBigUInt64BE(BigInt(length), 2);
   }
+
   return Buffer.concat([header, payload]);
 }
 
-function broadcast(msg) {
+function broadcastWS(msg) {
+  if (wsClients.size === 0) return;
   const frame = encodeWSFrame(msg);
-  for (const sock of wsClients) {
+  for (const client of wsClients) {
     try {
-      if (sock.writable) sock.write(frame);
+      client.write(frame);
     } catch (e) {
-      wsClients.delete(sock);
+      wsClients.delete(client);
     }
   }
 }
 
 // HTTP Server
 const server = http.createServer((req, res) => {
+  const parsedUrl = url.parse(req.url, true);
+  const pathname = parsedUrl.pathname;
+
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
-    res.end();
-    return;
+    return res.end();
   }
 
-  const parsedUrl = url.parse(req.url, true);
-  const pathname = parsedUrl.pathname;
-
-  const sendJSON = (statusCode, obj) => {
-    res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+  const sendJSON = (code, obj) => {
+    res.writeHead(code, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(obj));
   };
 
   const readBody = (callback) => {
     let body = '';
-    req.on('data', (chunk) => (body += chunk));
+    req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
       try {
         const parsed = body ? JSON.parse(body) : {};
@@ -657,9 +457,10 @@ const server = http.createServer((req, res) => {
     });
   };
 
-  // REST Routes
+  // REST API Routes
+
   if (pathname === '/api/health' && req.method === 'GET') {
-    return sendJSON(200, { ok: true, model_loaded: true, db: true, simulated: true, runtime: 'node' });
+    return sendJSON(200, { ok: true, model_loaded: mlEngine.isLoaded(), db: true, simulated: true, runtime: 'node' });
   }
 
   if (pathname === '/api/status' && req.method === 'GET') {
@@ -683,84 +484,117 @@ const server = http.createServer((req, res) => {
 
   if (pathname === '/api/sim/reset' && req.method === 'POST') {
     sim.running = false;
-    sim.scenario = 'normal';
     sim.tick = 0;
     sim.sim_t = 0.0;
-    sim.current_sev = 0.05;
-    sim.phase = 'normal';
-    sim.active_faults.clear();
-    sim.last = null;
     sim.rng = createRNG(sim.seed);
+    sim.actuators.suction_restriction = 0.0;
+    sim.actuators.bearing_wear = 0.0;
+    sim.actuators.discharge_throttling = 0.0;
+    sim.actuators.vibration_unbalance = 0.0;
+    sim.active_presets.clear();
+    sim.last = null;
     telemetry_window_30.length = 0;
     prediction_history_60.length = 0;
     alertMgr.reset();
-    // On reset, clear all active/acknowledged alerts and mark resolved
-    alerts_history.forEach((a) => {
-      if (a.status !== 'resolved') {
-        a.status = 'resolved';
-        a.resolved_ts = nowISO();
-      }
-    });
     return sendJSON(200, getStatusDict());
   }
 
-  if (pathname.startsWith('/api/sim/scenario/') && req.method === 'POST') {
-    const scen = pathname.replace('/api/sim/scenario/', '');
-    sim.scenario = SCENARIO_PARAMS[scen] ? scen : 'normal';
-    if (scen === 'normal') {
-      sim.sim_t = 0.0;
-      sim.phase = 'normal';
-    }
-    return sendJSON(200, getStatusDict());
-  }
-
-  if (pathname === '/api/sim/config' && req.method === 'POST') {
+  // Physical Actuation API: Directly manipulate physical pump conditions
+  if (pathname === '/api/sim/actuate' && req.method === 'POST') {
     return readBody((err, data) => {
-      if (data.speed !== undefined) sim.speed = Math.max(0.5, Math.min(5, +data.speed));
-      if (data.interval !== undefined) sim.interval = Math.max(0.2, Math.min(5, +data.interval));
-      sendJSON(200, getStatusDict());
-    });
-  }
-
-  if (pathname === '/api/sim/inject-fault' && req.method === 'POST') {
-    return readBody((err, data) => {
-      const fault = data.fault;
-      if (fault && FAULT_DEFINITIONS[fault]) {
-        if (data.action === 'remove' || data.action === 'resolve') {
-          resolveFault(fault);
-        } else if (data.action === 'toggle') {
-          if (sim.active_faults.has(fault)) {
-            resolveFault(fault);
-          } else {
-            sim.active_faults.add(fault);
-          }
-        } else {
-          // Default: Add and remain active!
-          sim.active_faults.add(fault);
+      if (data && data.actuator && sim.actuators[data.actuator] !== undefined) {
+        if (data.intensity !== undefined) {
+          sim.actuators[data.actuator] = Math.max(0.0, Math.min(1.0, +data.intensity));
+        } else if (data.delta !== undefined) {
+          sim.actuators[data.actuator] = Math.max(0.0, Math.min(1.0, +(sim.actuators[data.actuator] + data.delta).toFixed(2)));
         }
       }
       const msg = processTick();
-      sendJSON(200, { active_faults: Array.from(sim.active_faults), status: getStatusDict(), latest: msg });
+      sendJSON(200, { ok: true, actuators: sim.actuators, status: getStatusDict(), latest: msg });
     });
   }
 
-  if (pathname === '/api/sim/clear-fault' && req.method === 'POST') {
+  // Physical Maintenance & Equipment Repair Operation:
+  // Decoupled from alerts! Resets physical actuators back to nominal.
+  if (pathname === '/api/sim/repair' && req.method === 'POST') {
+    sim.actuators.suction_restriction = 0.0;
+    sim.actuators.bearing_wear = 0.0;
+    sim.actuators.discharge_throttling = 0.0;
+    sim.actuators.vibration_unbalance = 0.0;
+    sim.active_presets.clear();
+    const msg = processTick();
+    return sendJSON(200, { ok: true, message: 'Equipment maintenance complete. Restored to nominal baseline.', actuators: sim.actuators, latest: msg });
+  }
+
+  // Legacy Fault Injection API (Refactored to adjust physical conditions without creating alerts)
+  if (pathname === '/api/sim/inject-fault' && req.method === 'POST') {
     return readBody((err, data) => {
-      if (data && data.fault) {
-        resolveFault(data.fault);
-      } else {
-        for (const f of Array.from(sim.active_faults)) resolveFault(f);
+      const fault = data.fault;
+      const isRemove = data.action === 'remove' || data.action === 'resolve';
+      const isToggle = data.action === 'toggle';
+
+      if (fault === 'developing_cavitation') {
+        if (isToggle && sim.active_presets.has(fault)) {
+          sim.actuators.suction_restriction = Math.max(0.0, sim.actuators.suction_restriction - 0.55);
+          sim.active_presets.delete(fault);
+        } else if (!isRemove) {
+          sim.actuators.suction_restriction = Math.min(1.0, sim.actuators.suction_restriction + 0.55);
+          sim.active_presets.add(fault);
+        } else {
+          sim.actuators.suction_restriction = Math.max(0.0, sim.actuators.suction_restriction - 0.55);
+          sim.active_presets.delete(fault);
+        }
+      } else if (fault === 'severe_cavitation') {
+        if (isToggle && sim.active_presets.has(fault)) {
+          sim.actuators.suction_restriction = Math.max(0.0, sim.actuators.suction_restriction - 0.90);
+          sim.active_presets.delete(fault);
+        } else if (!isRemove) {
+          sim.actuators.suction_restriction = Math.min(1.0, Math.max(0.90, sim.actuators.suction_restriction + 0.35));
+          sim.active_presets.add(fault);
+        } else {
+          sim.actuators.suction_restriction = Math.max(0.0, sim.actuators.suction_restriction - 0.90);
+          sim.active_presets.delete(fault);
+        }
+      } else if (fault === 'bearing_wear') {
+        if (isToggle && sim.active_presets.has(fault)) {
+          sim.actuators.bearing_wear = Math.max(0.0, sim.actuators.bearing_wear - 0.85);
+          sim.active_presets.delete(fault);
+        } else if (!isRemove) {
+          sim.actuators.bearing_wear = Math.min(1.0, sim.actuators.bearing_wear + 0.85);
+          sim.active_presets.add(fault);
+        } else {
+          sim.actuators.bearing_wear = Math.max(0.0, sim.actuators.bearing_wear - 0.85);
+          sim.active_presets.delete(fault);
+        }
+      } else if (fault === 'pressure_drop') {
+        if (isToggle && sim.active_presets.has(fault)) {
+          sim.actuators.suction_restriction = Math.max(0.0, sim.actuators.suction_restriction - 0.70);
+          sim.active_presets.delete(fault);
+        } else if (!isRemove) {
+          sim.actuators.suction_restriction = Math.min(1.0, sim.actuators.suction_restriction + 0.70);
+          sim.active_presets.add(fault);
+        } else {
+          sim.actuators.suction_restriction = Math.max(0.0, sim.actuators.suction_restriction - 0.70);
+          sim.active_presets.delete(fault);
+        }
       }
+
+      // NO DIRECT ALERT FABRICATION: Process tick and let the ML engine discover the changes!
       const msg = processTick();
-      sendJSON(200, { active_faults: Array.from(sim.active_faults), status: getStatusDict(), latest: msg });
+      sendJSON(200, { ok: true, active_faults: Array.from(sim.active_presets), actuators: sim.actuators, latest: msg });
     });
   }
 
   if (pathname.match(/^\/api\/sim\/faults\/[a-zA-Z0-9_-]+\/resolve$/) && req.method === 'POST') {
-    const faultId = pathname.split('/')[4];
-    resolveFault(faultId);
+    const fault = pathname.split('/')[4];
+    if (fault === 'developing_cavitation' || fault === 'severe_cavitation' || fault === 'pressure_drop') {
+      sim.actuators.suction_restriction = 0.0;
+    } else if (fault === 'bearing_wear') {
+      sim.actuators.bearing_wear = 0.0;
+    }
+    sim.active_presets.delete(fault);
     const msg = processTick();
-    return sendJSON(200, { ok: true, active_faults: Array.from(sim.active_faults), status: getStatusDict(), latest: msg });
+    return sendJSON(200, { ok: true, active_faults: Array.from(sim.active_presets), actuators: sim.actuators, latest: msg });
   }
 
   if (pathname === '/api/sim/inject-anomaly' && req.method === 'POST') {
@@ -780,9 +614,9 @@ const server = http.createServer((req, res) => {
   }
 
   if (pathname === '/api/history/export' && req.method === 'GET') {
-    let csv = 'id,ts,sim_t,pump,scenario,' + RAW_SENSORS.join(',') + ',model_score,risk_level,status\n';
+    let csv = 'id,ts,sim_t,pump,' + RAW_SENSORS.join(',') + ',model_score,risk_level,status\n';
     for (const r of readings_history.slice(0, 1000).reverse()) {
-      csv += `${r.id},${r.ts},${r.sim_t},${r.pump},${r.scenario},${r.suction_pressure},${r.discharge_pressure},${r.flow_rate},${r.vibration_rms},${r.temperature},${r.rpm},${r.model_score},${r.risk_level},"${r.status}"\n`;
+      csv += `${r.id},${r.ts},${r.sim_t},${r.pump},${r.suction_pressure},${r.discharge_pressure},${r.flow_rate},${r.vibration_rms},${r.temperature},${r.rpm},${r.model_score},${r.risk_level},"${r.status}"\n`;
     }
     res.writeHead(200, {
       'Content-Type': 'text/csv',
@@ -795,6 +629,7 @@ const server = http.createServer((req, res) => {
     return sendJSON(200, alerts_history);
   }
 
+  // 1. Alert Acknowledgement: Marks alert acknowledged, records timestamp. Does NOT repair the pump.
   if (pathname.match(/^\/api\/alerts\/\d+\/ack$/) && req.method === 'POST') {
     const id = parseInt(pathname.split('/')[3], 10);
     const alert = alerts_history.find((a) => a.id === id);
@@ -805,17 +640,51 @@ const server = http.createServer((req, res) => {
     return sendJSON(200, alert || { ok: true });
   }
 
+  // 2. Incident Resolution: Marks alert resolved, records timestamp.
+  // CRITICAL REQUIREMENT: Resolving an alert does NOT repair physical pump equipment!
   if (pathname.match(/^\/api\/alerts\/\d+\/resolve$/) && req.method === 'POST') {
     const id = parseInt(pathname.split('/')[3], 10);
-    const alert = resolveAlert(id);
+    const alert = alerts_history.find((a) => a.id === id);
+    if (alert) {
+      alert.status = 'resolved';
+      alert.resolved_ts = nowISO();
+    }
     const msg = processTick();
     return sendJSON(200, alert || { ok: true, latest: msg });
+  }
+
+  // 3. Operator Incident Ground-Truth Validation:
+  // Retains operator classification (Confirmed Cavitation / False Positive / Missed Fault / Confirmed Normal)
+  // along with full 30s feature snapshot for model retraining and audit.
+  if (pathname.match(/^\/api\/alerts\/\d+\/validate$/) && req.method === 'POST') {
+    const id = parseInt(pathname.split('/')[3], 10);
+    const alert = alerts_history.find((a) => a.id === id);
+    return readBody((err, reqBody) => {
+      const record = {
+        alert_id: id,
+        timestamp: nowISO(),
+        classification: reqBody.classification || 'confirmed_cavitation',
+        notes: reqBody.notes || '',
+        operator: reqBody.operator || 'SCADA Operator',
+        alert_category: alert ? alert.category : 'Unknown',
+        model_score: alert ? alert.model_score : 0,
+        predicted_class: alert ? alert.predicted_class : 'Unknown',
+        telemetry_snapshot: telemetry_window_30.slice(-30)
+      };
+      validated_incidents.unshift(record);
+
+      const valDir = path.join(__dirname, 'models');
+      if (!fs.existsSync(valDir)) fs.mkdirSync(valDir, { recursive: true });
+      fs.writeFileSync(path.join(valDir, 'validated_incidents.json'), JSON.stringify(validated_incidents, null, 2));
+
+      sendJSON(200, { ok: true, record });
+    });
   }
 
   if (pathname === '/api/model/info' && req.method === 'GET') {
     return sendJSON(200, {
       loaded: mlEngine.isLoaded(),
-      version: mlEngine.model ? mlEngine.model.version : 'v2.1.0-timeseries',
+      version: mlEngine.model ? mlEngine.model.version : 'v2.2.0-timeseries',
       model_type: mlEngine.model ? mlEngine.model.model_type : 'CalibratedSoftmaxSequenceClassifier',
       window_seconds: 30,
       dataset_metadata: mlEngine.model ? mlEngine.model.dataset_metadata : {},
@@ -857,40 +726,61 @@ const server = http.createServer((req, res) => {
     return sendJSON(200, { original_score: 0.05, attributions: [], trajectory: 'Stable' });
   }
 
+  // Genuine Model Retraining Pipeline Execution
   if (pathname === '/api/retraining/run' && req.method === 'POST') {
     return readBody((err, reqBody) => {
-      const futureFrac = reqBody.future_train_fraction || 0.2;
-      const drift = reqBody.drift || 0.0;
-      const newV = `v1.${Math.floor(Date.now() / 1000)}`;
+      try {
+        const candidateVersion = `v2.${Math.floor(Date.now() / 1000)}`;
+        // Train candidate model on independent chronological episodes + validated operator data
+        const trainResult = trainModel({
+          version: candidateVersion,
+          seed: Math.floor(Date.now() % 100000),
+          epochs: 180,
+          dryRun: false
+        });
 
-      sendJSON(200, {
-        candidate_version: newV,
-        timestamp: nowISO(),
-        baseline_metrics: { accuracy: 0.958, f1_macro: 0.952, recall_cavitation: 0.976 },
-        candidate_metrics: {
-          accuracy: +(0.962 + 0.01 * futureFrac - 0.02 * drift).toFixed(3),
-          f1_macro: +(0.958 + 0.01 * futureFrac - 0.02 * drift).toFixed(3),
-          recall_cavitation: +(0.982 + 0.005 * futureFrac - 0.01 * drift).toFixed(3)
-        },
-        recommendation: drift > 0.5 ? 'reject' : 'deploy'
-      });
+        const baseline = mlEngine.metrics || { accuracy: 0.965, f1_macro: 0.960, recall_cavitation: 0.965 };
+        const candidate = {
+          accuracy: trainResult.accuracy,
+          f1_macro: trainResult.macro_f1,
+          recall_cavitation: trainResult.cavitation_recall
+        };
+
+        // Strict recommendation: Deploy only if candidate meets or exceeds baseline performance
+        const meetsThreshold = candidate.f1_macro >= (baseline.f1_macro * 0.98) && candidate.recall_cavitation >= 0.95;
+
+        sendJSON(200, {
+          candidate_version: candidateVersion,
+          timestamp: nowISO(),
+          baseline_metrics: baseline,
+          candidate_metrics: candidate,
+          recommendation: meetsThreshold ? 'deploy' : 'reject'
+        });
+      } catch (trainErr) {
+        sendJSON(500, { error: 'Retraining failed: ' + trainErr.message });
+      }
     });
   }
 
   if (pathname === '/api/retraining/deploy' && req.method === 'POST') {
     return readBody((err, reqBody) => {
-      sendJSON(200, { deployed: reqBody.version || 'v1.1.0', timestamp: nowISO() });
+      // Reload newly trained production model
+      mlEngine.load();
+      sendJSON(200, {
+        deployed: reqBody.version || (mlEngine.model ? mlEngine.model.version : 'v2.2.0-timeseries'),
+        timestamp: nowISO()
+      });
     });
   }
 
   if (pathname === '/api/demo/reset-data' && req.method === 'POST') {
     readings_history.length = 0;
     alerts_history.length = 0;
-    events_history.length = 0;
+    validated_incidents.length = 0;
     return sendJSON(200, { ok: true });
   }
 
-  // Serve Frontend Production Build if exists
+  // Serve Frontend Production Build
   const distDir = path.join(__dirname, 'frontend', 'dist');
   if (fs.existsSync(distDir)) {
     let filePath = path.join(distDir, pathname === '/' ? 'index.html' : pathname);
@@ -963,7 +853,6 @@ server.on('upgrade', (req, socket) => {
         return;
       }
       if (opcode === 0x09) {
-        // Ping -> Pong
         socket.write(Buffer.from([0x8a, 0x00]));
         return;
       }
@@ -1008,10 +897,9 @@ function runLoop() {
   setTimeout(runLoop, delay);
 }
 
-// Start Server
 server.listen(PORT, HOST, () => {
   console.log(`=======================================================`);
-  console.log(`  NEXCAV Pump Cavitation Backend running on http://${HOST}:${PORT}`);
+  console.log(`  NEXCAV Industrial Pump Monitoring Server running on http://${HOST}:${PORT}`);
   console.log(`  Live WebSocket stream: ws://${HOST}:${PORT}/ws/live`);
   console.log(`=======================================================`);
   runLoop();

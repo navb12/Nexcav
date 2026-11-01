@@ -4,7 +4,8 @@ import {
   AlertItem,
   ModelMetrics,
   RetrainingResult,
-  FeatureAttribution
+  FeatureAttribution,
+  PumpActuators
 } from './types.ts';
 import { AnimatedPump } from './components/AnimatedPump.tsx';
 import { SensorCard } from './components/SensorCard.tsx';
@@ -25,7 +26,12 @@ export const App: React.FC = () => {
 
   // Simulation Controls State
   const [simRunning, setSimRunning] = useState<boolean>(true);
-  const [activeFaults, setActiveFaults] = useState<string[]>([]);
+  const [actuators, setActuators] = useState<PumpActuators>({
+    suction_restriction: 0,
+    bearing_wear: 0,
+    discharge_throttling: 0,
+    vibration_unbalance: 0
+  });
 
   // Auxiliary Backend Diagnostics
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
@@ -87,7 +93,7 @@ export const App: React.FC = () => {
           if (msg.type === 'reading' || msg.type === 'snapshot') {
             setTelemetry(msg);
             if (msg.running !== undefined) setSimRunning(msg.running);
-            if (msg.active_faults) setActiveFaults(msg.active_faults);
+            if (msg.actuators) setActuators(msg.actuators);
 
             const r = msg.readings;
             if (r) {
@@ -150,13 +156,10 @@ export const App: React.FC = () => {
   };
 
   const handleResetSim = async () => {
-    if (activeFaults.length > 0 && !window.confirm('Reset simulation and clear active faults back to healthy baseline?')) {
-      return;
-    }
     try {
       await fetch('/api/sim/reset', { method: 'POST' });
       setSimRunning(false);
-      setActiveFaults([]);
+      setActuators({ suction_restriction: 0, bearing_wear: 0, discharge_throttling: 0, vibration_unbalance: 0 });
       setSuctionHistory([]);
       setDischargeHistory([]);
       setFlowHistory([]);
@@ -169,33 +172,46 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleInjectFault = async (fault: string) => {
+  const handleActuate = async (actuator: string, delta: number, intensity?: number) => {
     try {
-      const res = await fetch('/api/sim/inject-fault', {
+      const res = await fetch('/api/sim/actuate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fault, action: 'toggle' })
+        body: JSON.stringify({ actuator, delta, intensity })
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.active_faults) setActiveFaults(data.active_faults);
+        if (data.actuators) setActuators(data.actuators);
       }
       fetchAuxiliaryData();
     } catch {
-      setConnError('Failed to inject fault');
+      setConnError('Failed to send physical actuation signal');
     }
   };
 
-  const handleResolveFault = async (fault: string) => {
+  const handleRepairPump = async () => {
     try {
-      const res = await fetch(`/api/sim/faults/${fault}/resolve`, { method: 'POST' });
+      const res = await fetch('/api/sim/repair', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
-        if (data.active_faults) setActiveFaults(data.active_faults);
+        if (data.actuators) setActuators(data.actuators);
       }
       fetchAuxiliaryData();
     } catch {
-      setConnError('Failed to resolve fault');
+      setConnError('Failed to perform equipment repair');
+    }
+  };
+
+  const handleValidateAlert = async (id: number, classification: string, notes = '') => {
+    try {
+      await fetch(`/api/alerts/${id}/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ classification, notes })
+      });
+      fetchAuxiliaryData();
+    } catch {
+      // ignore
     }
   };
 
@@ -207,11 +223,7 @@ export const App: React.FC = () => {
 
   const handleResolveAlert = async (id: number) => {
     try {
-      const res = await fetch(`/api/alerts/${id}/resolve`, { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.latest?.active_faults) setActiveFaults(data.latest.active_faults);
-      }
+      await fetch(`/api/alerts/${id}/resolve`, { method: 'POST' });
     } catch {
       // ignore
     }
@@ -283,6 +295,7 @@ export const App: React.FC = () => {
           readings={currentReadings}
           onAcknowledge={() => handleAckAlert(criticalActiveAlert.id)}
           onResolve={() => handleResolveAlert(criticalActiveAlert.id)}
+          onValidate={(cls) => handleValidateAlert(criticalActiveAlert.id, cls)}
         />
       )}
       {/* 1. Header: NEXCAV, Unit ID, Connection & Navigation */}
@@ -431,12 +444,12 @@ export const App: React.FC = () => {
         <SimulationControls
           running={simRunning}
           simTime={telemetry?.sim_t ?? 0}
-          activeFaults={activeFaults}
+          actuators={actuators}
           onStart={handleStartSim}
           onPause={handlePauseSim}
           onReset={handleResetSim}
-          onInjectFault={handleInjectFault}
-          onResolveFault={handleResolveFault}
+          onActuate={handleActuate}
+          onRepairPump={handleRepairPump}
         />
 
         {/* Tab 1: Overview (Main Visual Focus) */}
@@ -461,7 +474,7 @@ export const App: React.FC = () => {
               <AnimatedPump
                 rpm={currentReadings.rpm}
                 vibration={currentReadings.vibration_rms}
-                severity={telemetry?.scenario_severity ?? (activeFaults.includes('severe_cavitation') ? 2.0 : activeFaults.includes('developing_cavitation') ? 1.35 : 0.05)}
+                severity={telemetry?.scenario_severity ?? 0.05}
                 status={telemetry?.status || 'Normal Operation'}
                 running={simRunning}
               />
@@ -603,7 +616,37 @@ export const App: React.FC = () => {
                           </span>
                         </div>
 
-                        <div style={{ display: 'flex', gap: '6px' }}>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                          <button
+                            onClick={() => handleValidateAlert(a.id, 'confirmed_cavitation')}
+                            style={{
+                              backgroundColor: 'transparent',
+                              color: 'var(--status-normal)',
+                              border: '1px dashed var(--border-subtle)',
+                              padding: '2px 6px',
+                              borderRadius: '2px',
+                              fontSize: '10px',
+                              cursor: 'pointer'
+                            }}
+                            title="Confirm genuine cavitation detection"
+                          >
+                            ✓ Confirm
+                          </button>
+                          <button
+                            onClick={() => handleValidateAlert(a.id, 'false_positive')}
+                            style={{
+                              backgroundColor: 'transparent',
+                              color: 'var(--status-critical)',
+                              border: '1px dashed var(--border-subtle)',
+                              padding: '2px 6px',
+                              borderRadius: '2px',
+                              fontSize: '10px',
+                              cursor: 'pointer'
+                            }}
+                            title="Classify as false positive"
+                          >
+                            ✗ FP
+                          </button>
                           {!isAck && (
                             <button
                               onClick={() => handleAckAlert(a.id)}

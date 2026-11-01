@@ -1,12 +1,12 @@
 {
-  "version": "v2.1.0-timeseries",
+  "version": "v2.2.0-timeseries",
   "model_type": "Time-Series Calibrated Sequence Classifier",
   "dataset_source": "Physically Plausible Synthetic Telemetry Dataset (Chronological Split)",
-  "trained_at": "2026-10-31T20:30:22.848Z",
+  "trained_at": "2026-11-01T16:04:41.454Z",
   "window_length_seconds": 30,
-  "accuracy": 0.9682,
-  "f1_macro": 0.9674,
-  "recall_cavitation": 0.9635,
+  "accuracy": 0.9815,
+  "f1_macro": 0.9803,
+  "recall_cavitation": 0.9815,
   "classes": [
     "Normal Operation",
     "Incipient Cavitation",
@@ -15,82 +15,90 @@
   ],
   "confusion_matrix": [
     [
-      795,
-      3,
+      856,
+      5,
       0,
       0
     ],
     [
-      42,
-      352,
-      0,
+      23,
+      378,
+      4,
       0
     ],
     [
       0,
-      17,
-      377,
+      7,
+      398,
       0
     ],
     [
       0,
       0,
       0,
-      363
+      435
     ]
   ],
   "feature_importance": [
     {
       "feature": "head_diff",
-      "importance": 0.1246
-    },
-    {
-      "feature": "suction_vapor_margin",
-      "importance": 0.095
-    },
-    {
-      "feature": "slope_suction",
-      "importance": 0.0907
-    },
-    {
-      "feature": "current_vibration",
-      "importance": 0.0901
-    },
-    {
-      "feature": "current_discharge",
-      "importance": 0.0887
+      "importance": 0.126
     },
     {
       "feature": "current_suction",
-      "importance": 0.0884
+      "importance": 0.1237
+    },
+    {
+      "feature": "current_rpm",
+      "importance": 0.1007
     },
     {
       "feature": "current_flow",
-      "importance": 0.0758
+      "importance": 0.1006
     },
     {
-      "feature": "flow_deviation_pct",
-      "importance": 0.0758
+      "feature": "current_discharge",
+      "importance": 0.098
     },
     {
-      "feature": "std_suction",
-      "importance": 0.0599
+      "feature": "vib_to_flow_ratio",
+      "importance": 0.091
     },
     {
-      "feature": "slope_discharge",
-      "importance": 0.0569
+      "feature": "current_vibration",
+      "importance": 0.0831
     },
     {
-      "feature": "std_vibration",
+      "feature": "current_temperature",
       "importance": 0.056
     },
     {
+      "feature": "slope_suction",
+      "importance": 0.0496
+    },
+    {
+      "feature": "slope_discharge",
+      "importance": 0.0373
+    },
+    {
+      "feature": "std_vibration",
+      "importance": 0.0339
+    },
+    {
       "feature": "slope_flow",
-      "importance": 0.0554
+      "importance": 0.0295
     },
     {
       "feature": "slope_vibration",
-      "importance": 0.0426
+      "importance": 0.0283
+    },
+    {
+      "feature": "slope_temperature",
+      "importance": 0.0266
+    },
+    {
+      "feature": "std_suction",
+      "importance": 0.0156
     }
   ]
 }

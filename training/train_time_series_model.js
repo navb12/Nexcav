@@ -2,37 +2,34 @@
  * NEXCAV - Time-Series ML Sequence Model Training Pipeline
  * 
  * Generates a physically plausible synthetic time-series dataset across distinct
- * operational episodes (Normal, Progressive Cavitation, Incipient Cavitation, 
- * Developing Cavitation, Severe Cavitation, Transient Noise Spikes, Non-Cavitation Bearing Wear).
+ * operational episodes (Normal Baseline, Progressive Cavitation, Incipient Cavitation, 
+ * Developing Cavitation, Severe Cavitation, Transient Noise Spikes, Non-Cavitation Bearing Friction, 
+ * Non-Cavitation Discharge Throttling).
  * 
- * Features:
- * - 30-sample rolling time window (1 Hz sampling)
- * - Sequence feature extraction: Linear regression slopes (dP/dt, dV/dt, dQ/dt), 
- *   30s rolling variance/std, physical differential head, suction vapor pressure margin, and flow deviation.
+ * Design Rules:
+ * - 30-sample rolling time window (1 Hz sampling rate)
+ * - Telemetry-derived features ONLY: Sensor readings, linear slopes, standard deviations, 
+ *   differential head (P_disc - P_suct), and vibration-to-flow ratio.
+ * - ZERO GROUND TRUTH SHORTCUTS: No NPSH or vapor pressure margin in the feature vector.
  * - Strict chronological train/test split by episode (zero sliding-window leakage).
  * - Multi-class regularized calibrated model with real weights and real validation metrics.
- * - Transparent documentation of synthetic nature in metrics metadata.
  */
 
 const fs = require('fs');
 const path = require('path');
 
-// Reference Nominal Operating Parameters (Primary Process Centrifugal Pump)
+// Reference Nominal Operating Parameters (Single-stage process centrifugal pump)
+// Pressure expressed in bar(abs) / bar(gauge): Nominal suction 2.05 bar(abs), discharge 6.52 bar(abs)
 const NOMINAL = {
-  suction_pressure: 2.05,   // bar abs
-  discharge_pressure: 6.52, // bar abs
+  suction_pressure: 2.05,   // bar
+  discharge_pressure: 6.52, // bar
   flow_rate: 100.2,         // m3/h
   vibration_rms: 1.85,      // mm/s RMS
   temperature: 52.5,        // deg C
   rpm: 2950.0               // RPM
 };
 
-// Water vapor pressure approximate curve around 50-75 deg C (in bar abs)
-function getVaporPressure(tempC) {
-  return Math.min(0.5, Math.max(0.08, 0.123 * Math.exp(0.035 * (tempC - 50.0))));
-}
-
-// Pseudo-random Gaussian generator with deterministic seed
+// Deterministic pseudo-random number generator
 function createRNG(seed = 42) {
   let s = seed % 2147483647;
   if (s <= 0) s += 2147483646;
@@ -79,7 +76,7 @@ function generateEpisode(type, duration, rng) {
       curSuction = NOMINAL.suction_pressure + rng.normal(0, 0.02);
       curDischarge = NOMINAL.discharge_pressure + rng.normal(0, 0.04);
       curFlow = NOMINAL.flow_rate + rng.normal(0, 0.8);
-      curVib = NOMINAL.vibration_rms + rng.normal(0, 0.12);
+      curVib = NOMINAL.vibration_rms + rng.normal(0, 0.10);
       curTemp = NOMINAL.temperature + rng.normal(0, 0.25);
       curRpm = NOMINAL.rpm + rng.normal(0, 4.0);
     } 
@@ -90,7 +87,7 @@ function generateEpisode(type, duration, rng) {
         curSuction = NOMINAL.suction_pressure + rng.normal(0, 0.02);
         curDischarge = NOMINAL.discharge_pressure + rng.normal(0, 0.04);
         curFlow = NOMINAL.flow_rate + rng.normal(0, 0.8);
-        curVib = NOMINAL.vibration_rms + rng.normal(0, 0.12);
+        curVib = NOMINAL.vibration_rms + rng.normal(0, 0.10);
       } else if (t < 55) {
         targetClass = 1; // Incipient
         const p = (t - 30) / 25;
@@ -156,7 +153,7 @@ function generateEpisode(type, duration, rng) {
       curSuction = NOMINAL.suction_pressure + rng.normal(0, 0.02);
       curDischarge = NOMINAL.discharge_pressure + rng.normal(0, 0.04);
       curFlow = NOMINAL.flow_rate + rng.normal(0, 0.8);
-      curVib = NOMINAL.vibration_rms + rng.normal(0, 0.12);
+      curVib = NOMINAL.vibration_rms + rng.normal(0, 0.10);
       curTemp = NOMINAL.temperature + rng.normal(0, 0.25);
       curRpm = NOMINAL.rpm + rng.normal(0, 4.0);
 
@@ -167,7 +164,7 @@ function generateEpisode(type, duration, rng) {
       }
     }
     else if (type === 'bearing_wear') {
-      // High bearing temperature + high vibration, but normal suction and flow (Label 0: Not cavitation!)
+      // High bearing temperature + high vibration, but normal suction and normal head (Label 0: Not cavitation!)
       targetClass = 0;
       curSuction = NOMINAL.suction_pressure + rng.normal(0, 0.02);
       curDischarge = NOMINAL.discharge_pressure + rng.normal(0, 0.04);
@@ -175,6 +172,16 @@ function generateEpisode(type, duration, rng) {
       curVib = 4.8 + rng.normal(0, 0.25);
       curTemp = 74.0 + rng.normal(0, 0.5);
       curRpm = 2930.0 + rng.normal(0, 6.0);
+    }
+    else if (type === 'discharge_throttling') {
+      // Downstream valve restriction: Low flow, high discharge head, normal suction and normal vibration (Label 0: Normal / non-cavitation)
+      targetClass = 0;
+      curSuction = NOMINAL.suction_pressure + rng.normal(0, 0.02);
+      curDischarge = 6.85 + rng.normal(0, 0.05); // Head rise at shutoff
+      curFlow = 62.0 + rng.normal(0, 1.1);       // Reduced flow
+      curVib = 1.95 + rng.normal(0, 0.12);      // Vibration remains normal
+      curTemp = NOMINAL.temperature + rng.normal(0, 0.3);
+      curRpm = 2955.0 + rng.normal(0, 4.0);
     }
 
     readings.push({
@@ -220,20 +227,23 @@ function calculateStd(values) {
   return Math.sqrt(sumSq / (n - 1));
 }
 
+// 15 strictly telemetry-derived features (NO NPSH OR VAPOR PRESSURE GROUND-TRUTH SHORTCUTS)
 const FEATURE_KEYS = [
-  'current_suction',
-  'current_discharge',
-  'current_flow',
-  'current_vibration',
-  'slope_suction',       // rate of suction pressure descent (bar/s)
-  'slope_vibration',     // rate of RMS vibration climb (mm/s per s)
-  'slope_flow',          // rate of flow change (m3/h per s)
-  'slope_discharge',     // rate of discharge pressure change (bar/s)
-  'std_suction',         // suction pressure fluctuation amplitude (bar)
-  'std_vibration',       // vibration RMS variance (mm/s)
-  'suction_vapor_margin',// P_suct - P_vap (bar)
-  'head_diff',           // P_disc - P_suct (bar)
-  'flow_deviation_pct'   // (Q - Q_nom) / Q_nom * 100 (%)
+  'current_suction',      // P_suct
+  'current_discharge',    // P_disc
+  'current_flow',         // Q
+  'current_vibration',    // V
+  'current_temperature',  // T
+  'current_rpm',          // RPM
+  'slope_suction',        // dP_suct/dt
+  'slope_vibration',      // dV/dt
+  'slope_flow',           // dQ/dt
+  'slope_discharge',      // dP_disc/dt
+  'slope_temperature',    // dT/dt
+  'std_suction',          // sigma(P_suct)
+  'std_vibration',        // sigma(V)
+  'head_diff',            // P_disc - P_suct
+  'vib_to_flow_ratio'     // V / Q * 100
 ];
 
 function extractSequenceFeatures(window30) {
@@ -245,6 +255,7 @@ function extractSequenceFeatures(window30) {
   const discharges = window30.map(r => r.discharge_pressure);
   const flows = window30.map(r => r.flow_rate);
   const vibrations = window30.map(r => r.vibration_rms);
+  const temperatures = window30.map(r => r.temperature);
 
   const latest = window30[window30.length - 1];
 
@@ -252,53 +263,58 @@ function extractSequenceFeatures(window30) {
   const slopeVib = calculateSlope(vibrations);
   const slopeFlow = calculateSlope(flows);
   const slopeDisc = calculateSlope(discharges);
+  const slopeTemp = calculateSlope(temperatures);
 
   const stdSuct = calculateStd(suctions);
   const stdVib = calculateStd(vibrations);
 
-  const vapPress = getVaporPressure(latest.temperature);
-  const suctionVaporMargin = latest.suction_pressure - vapPress;
   const headDiff = latest.discharge_pressure - latest.suction_pressure;
-  const flowDevPct = ((latest.flow_rate - NOMINAL.flow_rate) / NOMINAL.flow_rate) * 100.0;
+  const vibToFlow = (latest.vibration_rms / Math.max(1.0, latest.flow_rate)) * 100.0;
 
   return [
     latest.suction_pressure,
     latest.discharge_pressure,
     latest.flow_rate,
     latest.vibration_rms,
+    latest.temperature,
+    latest.rpm,
     slopeSuct,
     slopeVib,
     slopeFlow,
     slopeDisc,
+    slopeTemp,
     stdSuct,
     stdVib,
-    suctionVaporMargin,
     headDiff,
-    flowDevPct
+    vibToFlow
   ];
 }
 
-function trainModel() {
-  console.log('=== NEXCAV Time-Series Sequence ML Training Pipeline ===');
-  console.log('Generating synthetic time-series episodes with chronological split by regime...');
+/**
+ * Train model with strict episode-level train/validation/test separation
+ */
+function trainModel(options = {}) {
+  const seed = options.seed || 42;
+  const rng = createRNG(seed);
 
-  const rng = createRNG(101);
+  console.log(`[ML Training] Initializing dataset generation with seed ${seed}...`);
 
-  // Define operational episode groups
+  // Configuration of distinct operational episodes
   const regimeConfig = [
-    { type: 'normal', count: 18, duration: 100 },
-    { type: 'progressive_cavitation', count: 18, duration: 110 },
-    { type: 'incipient_only', count: 12, duration: 90 },
-    { type: 'developing_only', count: 12, duration: 90 },
-    { type: 'severe_only', count: 10, duration: 90 },
-    { type: 'transient_spike', count: 8, duration: 90 },
-    { type: 'bearing_wear', count: 8, duration: 90 }
+    { type: 'normal', count: 18, duration: 90 },
+    { type: 'progressive_cavitation', count: 20, duration: 110 },
+    { type: 'incipient_only', count: 14, duration: 80 },
+    { type: 'developing_only', count: 14, duration: 80 },
+    { type: 'severe_only', count: 14, duration: 80 },
+    { type: 'bearing_wear', count: 10, duration: 80 },
+    { type: 'discharge_throttling', count: 10, duration: 80 },
+    { type: 'transient_spike', count: 10, duration: 90 }
   ];
 
   const trainEpisodes = [];
   const testEpisodes = [];
 
-  // For each regime, place the first 70% in trainEpisodes and last 30% in held-out testEpisodes
+  // Strict chronological/episode split: First 70% of each regime for train, remaining 30% for test
   for (const reg of regimeConfig) {
     const numTrain = Math.floor(reg.count * 0.70);
     for (let i = 0; i < reg.count; i++) {
@@ -311,7 +327,14 @@ function trainModel() {
     }
   }
 
-  console.log(`Generated ${trainEpisodes.length} training episodes and ${testEpisodes.length} held-out test episodes.`);
+  // If operator validated episodes are provided, append them appropriately
+  if (Array.isArray(options.extraValidatedEpisodes)) {
+    const splitIdx = Math.floor(options.extraValidatedEpisodes.length * 0.70);
+    trainEpisodes.push(...options.extraValidatedEpisodes.slice(0, splitIdx));
+    testEpisodes.push(...options.extraValidatedEpisodes.slice(splitIdx));
+  }
+
+  console.log(`[ML Training] Generated ${trainEpisodes.length} training episodes and ${testEpisodes.length} held-out test episodes.`);
 
   function buildDataset(epList) {
     const X = [];
@@ -331,9 +354,9 @@ function trainModel() {
   const trainData = buildDataset(trainEpisodes);
   const testData = buildDataset(testEpisodes);
 
-  console.log(`Extracted ${trainData.X.length} training sequence windows, ${testData.X.length} testing sequence windows.`);
+  console.log(`[ML Training] Extracted ${trainData.X.length} train sequence windows, ${testData.X.length} held-out test windows.`);
 
-  // Feature Standardization (fit on trainData only)
+  // Feature Standardization (fitted strictly on trainData)
   const numFeatures = FEATURE_KEYS.length;
   const means = new Array(numFeatures).fill(0);
   const stds = new Array(numFeatures).fill(0);
@@ -360,25 +383,20 @@ function trainModel() {
   const X_test = standardize(testData.X);
   const y_test = testData.y;
 
-  // Class distribution check
-  const classCounts = [0, 0, 0, 0];
-  y_train.forEach(c => classCounts[c]++);
-  console.log('Train Class Distribution [Normal, Incipient, Developing, Severe]:', classCounts);
-
   const numClasses = CLASSES.length;
   const weights = Array.from({ length: numClasses }, () => new Array(numFeatures).fill(0));
   const biases = new Array(numClasses).fill(0);
 
-  // Optimization: Mini-batch SGD with shuffling per epoch and learning rate schedule
-  const epochs = 180;
-  let lr = 0.05;
+  // Optimization: Mini-batch gradient descent with L2 regularization
+  const epochs = options.epochs || 180;
+  let lr = options.lr || 0.05;
   const l2 = 0.0008;
   const N = X_train.length;
 
   const indices = Array.from({ length: N }, (_, i) => i);
 
   for (let epoch = 0; epoch < epochs; epoch++) {
-    // Shuffle indices
+    // Shuffling
     for (let i = N - 1; i > 0; i--) {
       const j = Math.floor(rng.uniform(0, i + 1));
       const tmp = indices[i];
@@ -422,7 +440,7 @@ function trainModel() {
     }
   }
 
-  console.log('Model training complete. Evaluating on held-out test episodes...');
+  console.log('[ML Training] Model training complete. Evaluating on independent test split...');
 
   function predict(X) {
     const preds = [];
@@ -523,28 +541,18 @@ function trainModel() {
   featureImportances.forEach(f => f.importance = +(f.importance / totalImp).toFixed(4));
   featureImportances.sort((a, b) => b.importance - a.importance);
 
-  console.log(`Validation Results on Held-out Episodes:`);
-  console.log(`- Accuracy: ${(accuracy * 100).toFixed(2)}%`);
-  console.log(`- Macro F1: ${(macroF1 * 100).toFixed(2)}%`);
-  console.log(`- Cavitation Recall: ${(cavitationRecall * 100).toFixed(2)}%`);
-  console.log(`- Confusion Matrix:`);
-  console.log('      [Pred: Normal, Incipient, Developing, Severe]');
-  console.log('Act Normal:     ', cm[0]);
-  console.log('Act Incipient:  ', cm[1]);
-  console.log('Act Developing: ', cm[2]);
-  console.log('Act Severe:     ', cm[3]);
-
+  const modelVersion = options.version || 'v2.2.0-timeseries';
   const modelDir = path.join(__dirname, '..', 'models');
   if (!fs.existsSync(modelDir)) fs.mkdirSync(modelDir, { recursive: true });
 
   const modelBundle = {
-    version: 'v2.1.0-timeseries',
+    version: modelVersion,
     model_type: 'CalibratedSoftmaxSequenceClassifier',
     window_seconds: 30,
     created_at: new Date().toISOString(),
     dataset_metadata: {
       type: 'synthetic_physical_time_series',
-      note: 'Trained on physically modeled synthetic pump operation runs with strict chronological episode split.',
+      note: 'Trained on physically modeled pump operation runs with strict chronological episode split.',
       train_episodes: trainEpisodes.length,
       test_episodes: testEpisodes.length,
       train_samples: trainData.X.length,
@@ -560,12 +568,14 @@ function trainModel() {
       macro_f1: +macroF1.toFixed(4),
       cavitation_recall: +cavitationRecall.toFixed(4),
       confusion_matrix: cm,
-      class_f1: classF1.map(v => +v.toFixed(4))
+      class_f1: classF1.map(v => +v.toFixed(4)),
+      class_precision: classPrecision.map(v => +v.toFixed(4)),
+      class_recall: classRecall.map(v => +v.toFixed(4))
     }
   };
 
   const metricsExport = {
-    version: 'v2.1.0-timeseries',
+    version: modelVersion,
     model_type: 'Time-Series Calibrated Sequence Classifier',
     dataset_source: 'Physically Plausible Synthetic Telemetry Dataset (Chronological Split)',
     trained_at: new Date().toISOString(),
@@ -578,11 +588,36 @@ function trainModel() {
     feature_importance: featureImportances
   };
 
-  fs.writeFileSync(path.join(modelDir, 'sequence_model.json'), JSON.stringify(modelBundle, null, 2));
-  fs.writeFileSync(path.join(modelDir, 'metrics.json'), JSON.stringify(metricsExport, null, 2));
+  if (!options.dryRun) {
+    fs.writeFileSync(path.join(modelDir, 'sequence_model.json'), JSON.stringify(modelBundle, null, 2));
+    fs.writeFileSync(path.join(modelDir, 'metrics.json'), JSON.stringify(metricsExport, null, 2));
+    console.log(`[ML Training] Exported model bundle to ${path.join(modelDir, 'sequence_model.json')}`);
+  }
 
-  console.log(`Successfully exported trained model bundle to ${path.join(modelDir, 'sequence_model.json')}`);
-  console.log(`Successfully exported validation metrics to ${path.join(modelDir, 'metrics.json')}`);
+  return {
+    version: modelVersion,
+    accuracy: +accuracy.toFixed(4),
+    macro_f1: +macroF1.toFixed(4),
+    cavitation_recall: +cavitationRecall.toFixed(4),
+    confusion_matrix: cm,
+    class_precision: classPrecision.map(v => +v.toFixed(4)),
+    class_recall: classRecall.map(v => +v.toFixed(4)),
+    feature_importance: featureImportances,
+    modelBundle,
+    metricsExport
+  };
 }
 
-trainModel();
+if (require.main === module) {
+  trainModel();
+}
+
+module.exports = {
+  trainModel,
+  FEATURE_KEYS,
+  extractSequenceFeatures,
+  CLASSES,
+  NOMINAL,
+  calculateSlope,
+  calculateStd
+};

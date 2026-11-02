@@ -69,6 +69,13 @@ export interface PumpActuators {
   vibration_unbalance: number;
 }
 
+export interface ReplayRunItem {
+  run_id: string;
+  label: string;
+  total_seconds: number;
+  max_severity_pct: number;
+}
+
 export interface LiveTelemetryMessage {
   type: 'reading' | 'snapshot';
   ts: string;
@@ -76,6 +83,10 @@ export interface LiveTelemetryMessage {
   pump: string;
   scenario?: string;
   simulated: boolean;
+  mode?: 'manual' | 'replay';
+  replay_run_id?: string | null;
+  replay_state?: 'idle' | 'playing' | 'paused' | 'complete';
+  replay_progress?: { current: number; total: number };
   readings: SensorReadings;
   anomaly: 'spike' | 'dropout' | null;
   prediction: ModelPrediction | null;
@@ -129,13 +140,58 @@ export interface FeatureAttribution {
 }
 
 export interface ModelMetrics {
-  version: string;
+  version?: string;
   model_type: string;
   accuracy: number;
-  f1_macro: number;
-  recall_cavitation: number;
+  precision?: number;
+  recall?: number;
+  f1_score?: number;
+  roc_auc?: number;
+  f1_macro?: number;
+  recall_cavitation?: number;
   confusion_matrix: number[][];
-  feature_importance: { feature: string; importance: number }[];
+  roc_curve?: { fpr: number; tpr: number }[];
+  feature_importances?: { feature: string; importance: number }[];
+  split_sizes?: {
+    train_runs: number;
+    test_runs: number;
+    train_samples: number;
+    test_samples: number;
+  };
+  class_balance?: {
+    train: Record<string, number>;
+    test: Record<string, number>;
+  };
+  feature_importance?: { feature: string; importance: number }[];
+}
+
+export interface DataOverviewPlotPoint {
+  t: number;
+  vib: number;
+  sp: number;
+  dp: number;
+  fl: number;
+  sev: number;
+  lbl: number;
+}
+
+export interface FeedbackSummary {
+  total_alerts: number;
+  correct: number;
+  false_alarms: number;
+  unreviewed: number;
+  false_alarm_rate: number;
+  recent_entries: Record<string, string>[];
+}
+
+export interface DataOverview {
+  metrics: ModelMetrics;
+  first_10_rows: Record<string, string>[];
+  plots: {
+    healthy: DataOverviewPlotPoint[];
+    cavitation: DataOverviewPlotPoint[];
+  };
+  feedback_summary?: FeedbackSummary;
 }
 
 export interface RetrainingResult {

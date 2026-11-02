@@ -9,25 +9,14 @@ interface PumpSchematicProps {
 }
 
 export const PumpSchematic: React.FC<PumpSchematicProps> = ({
-  rpm = 2950,
   running = true,
   probability = 0.05,
   severityStage = 'Normal'
 }) => {
-  // Speed of rotation
-  const spinSpeed = running ? Math.max(0.4, 2400 / Math.max(rpm, 100)) : 0;
+  // Constant smooth impeller rotation speed (perfectly calm and steady)
+  const spinSpeed = running ? 2.4 : 0;
 
-  // Shake amplitude: Normal = 0px, Incipient = 0.5px, Developed = 1.2px, Severe = 2.0px
-  let shakeAmp = 0;
-  if (severityStage === 'Severe' || probability >= 0.80) {
-    shakeAmp = 2.0;
-  } else if (severityStage === 'Developed' || probability >= 0.50) {
-    shakeAmp = 1.2;
-  } else if (severityStage === 'Incipient' || probability >= 0.25) {
-    shakeAmp = 0.5;
-  }
-
-  // Scale bubbles: none at Normal, 2 at Incipient, 4 at Developed, 6 at Severe
+  // Scale bubbles with severity: none at Normal, 2 at Incipient, 4 at Developed, 6 at Severe
   let bubbleCount = 0;
   if (severityStage === 'Severe' || probability >= 0.80) {
     bubbleCount = 6;
@@ -45,9 +34,8 @@ export const PumpSchematic: React.FC<PumpSchematicProps> = ({
         justifyContent: 'center',
         width: '100%',
         height: '180px',
-        position: 'relative',
-        ['--shake-amp' as string]: `${shakeAmp}px`
-      } as React.CSSProperties}
+        position: 'relative'
+      }}
     >
       <svg
         viewBox="0 0 240 180"
@@ -65,28 +53,11 @@ export const PumpSchematic: React.FC<PumpSchematicProps> = ({
               80% { opacity: 0.9; }
               100% { transform: translateX(65px); opacity: 0; }
             }
-            @keyframes pumpShake {
-              0% { transform: translate(0px, 0px); }
-              25% { transform: translate(calc(var(--shake-amp) * -0.7), calc(var(--shake-amp) * 0.5)); }
-              50% { transform: translate(calc(var(--shake-amp) * 0.8), calc(var(--shake-amp) * -0.6)); }
-              75% { transform: translate(calc(var(--shake-amp) * -0.5), calc(var(--shake-amp) * -0.7)); }
-              100% { transform: translate(0px, 0px); }
-            }
-            @media (prefers-reduced-motion: reduce) {
-              .pump-shake-group {
-                animation: none !important;
-              }
-            }
           `}</style>
         </defs>
 
-        {/* Pump Assembly (Vibrates subtly with amplitude driven by CSS variable) */}
-        <g
-          className="pump-shake-group"
-          style={{
-            animation: running && shakeAmp > 0 ? 'pumpShake 0.08s infinite linear' : 'none'
-          }}
-        >
+        {/* Pump Assembly (Completely stationary, zero shake or jitter) */}
+        <g>
           {/* 1. Suction Inlet Pipe (Horizontal on Left) */}
           <rect
             x="10"

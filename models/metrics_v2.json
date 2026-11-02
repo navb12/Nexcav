@@ -1,0 +1,276 @@
+{
+  "model_version": "model_v2",
+  "model_type": "RandomForestClassifier",
+  "accuracy": 0.9683,
+  "precision": 0.9698,
+  "recall": 0.9545,
+  "f1_score": 0.9621,
+  "roc_auc": 0.9945,
+  "confusion_matrix": [
+    [
+      680,
+      15
+    ],
+    [
+      23,
+      482
+    ]
+  ],
+  "roc_curve": [
+    {
+      "fpr": 0.0,
+      "tpr": 0.0
+    },
+    {
+      "fpr": 0.0,
+      "tpr": 0.6436
+    },
+    {
+      "fpr": 0.0,
+      "tpr": 0.6574
+    },
+    {
+      "fpr": 0.0,
+      "tpr": 0.6772
+    },
+    {
+      "fpr": 0.0,
+      "tpr": 0.7208
+    },
+    {
+      "fpr": 0.0,
+      "tpr": 0.7683
+    },
+    {
+      "fpr": 0.0,
+      "tpr": 0.8891
+    },
+    {
+      "fpr": 0.0029,
+      "tpr": 0.9168
+    },
+    {
+      "fpr": 0.0043,
+      "tpr": 0.9287
+    },
+    {
+      "fpr": 0.0072,
+      "tpr": 0.9307
+    },
+    {
+      "fpr": 0.0101,
+      "tpr": 0.9366
+    },
+    {
+      "fpr": 0.0115,
+      "tpr": 0.9446
+    },
+    {
+      "fpr": 0.0129,
+      "tpr": 0.9465
+    },
+    {
+      "fpr": 0.0158,
+      "tpr": 0.9505
+    },
+    {
+      "fpr": 0.0187,
+      "tpr": 0.9525
+    },
+    {
+      "fpr": 0.0201,
+      "tpr": 0.9545
+    },
+    {
+      "fpr": 0.0216,
+      "tpr": 0.9564
+    },
+    {
+      "fpr": 0.0245,
+      "tpr": 0.9584
+    },
+    {
+      "fpr": 0.0288,
+      "tpr": 0.9624
+    },
+    {
+      "fpr": 0.0331,
+      "tpr": 0.9644
+    },
+    {
+      "fpr": 0.0403,
+      "tpr": 0.9663
+    },
+    {
+      "fpr": 0.0446,
+      "tpr": 0.9683
+    },
+    {
+      "fpr": 0.0691,
+      "tpr": 0.9703
+    },
+    {
+      "fpr": 0.0734,
+      "tpr": 0.9723
+    },
+    {
+      "fpr": 0.0748,
+      "tpr": 0.9743
+    },
+    {
+      "fpr": 0.0777,
+      "tpr": 0.9762
+    },
+    {
+      "fpr": 0.082,
+      "tpr": 0.9782
+    },
+    {
+      "fpr": 0.0892,
+      "tpr": 0.9802
+    },
+    {
+      "fpr": 0.0935,
+      "tpr": 0.9822
+    },
+    {
+      "fpr": 0.0964,
+      "tpr": 0.9842
+    },
+    {
+      "fpr": 0.105,
+      "tpr": 0.9861
+    },
+    {
+      "fpr": 0.1209,
+      "tpr": 0.9881
+    },
+    {
+      "fpr": 0.1237,
+      "tpr": 0.9901
+    },
+    {
+      "fpr": 0.154,
+      "tpr": 0.9921
+    },
+    {
+      "fpr": 0.1669,
+      "tpr": 0.9941
+    },
+    {
+      "fpr": 0.2302,
+      "tpr": 0.996
+    },
+    {
+      "fpr": 0.2734,
+      "tpr": 0.998
+    },
+    {
+      "fpr": 0.4935,
+      "tpr": 1.0
+    },
+    {
+      "fpr": 0.8763,
+      "tpr": 1.0
+    },
+    {
+      "fpr": 0.9065,
+      "tpr": 1.0
+    },
+    {
+      "fpr": 0.9108,
+      "tpr": 1.0
+    },
+    {
+      "fpr": 0.9712,
+      "tpr": 1.0
+    },
+    {
+      "fpr": 1.0,
+      "tpr": 1.0
+    }
+  ],
+  "feature_importances": [
+    {
+      "feature": "temperature_max",
+      "importance": 0.2319
+    },
+    {
+      "feature": "temperature_mean",
+      "importance": 0.1274
+    },
+    {
+      "feature": "suction_pressure_mean",
+      "importance": 0.1182
+    },
+    {
+      "feature": "discharge_pressure",
+      "importance": 0.1076
+    },
+    {
+      "feature": "suction_pressure",
+      "importance": 0.0989
+    },
+    {
+      "feature": "temperature",
+      "importance": 0.0767
+    },
+    {
+      "feature": "discharge_pressure_mean",
+      "importance": 0.0746
+    },
+    {
+      "feature": "flow_rate_mean",
+      "importance": 0.038
+    },
+    {
+      "feature": "suction_pressure_std",
+      "importance": 0.0236
+    },
+    {
+      "feature": "suction_pressure_max",
+      "importance": 0.0224
+    },
+    {
+      "feature": "flow_rate",
+      "importance": 0.0155
+    },
+    {
+      "feature": "vibration_rms_max",
+      "importance": 0.0137
+    },
+    {
+      "feature": "vibration_rms_mean",
+      "importance": 0.012
+    },
+    {
+      "feature": "vib_to_flow",
+      "importance": 0.0066
+    },
+    {
+      "feature": "head_diff",
+      "importance": 0.0049
+    }
+  ],
+  "split_sizes": {
+    "train_runs": 81,
+    "test_runs": 20,
+    "train_samples": 4801,
+    "test_samples": 1200,
+    "feedback_samples_added": 1
+  },
+  "class_balance": {
+    "train": {
+      "0": 2894,
+      "1": 1907
+    },
+    "test": {
+      "0": 695,
+      "1": 505
+    }
+  },
+  "classes": [
+    "Normal Operation",
+    "Cavitation"
+  ]
+}

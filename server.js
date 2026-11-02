@@ -147,6 +147,64 @@ const sensor_thresholds = {
   flow_rate: { warning: 75.0, alarm: 60.0, operator: '<', label: 'Volumetric Flow' }
 };
 
+// CSV Replay State
+const replay = {
+  mode: 'manual', // 'manual' | 'replay'
+  selected_run_id: null,
+  state: 'idle', // 'idle' | 'playing' | 'paused' | 'complete'
+  current_index: 0,
+  rows: [],
+  cache_runs: null
+};
+
+// Parse data/test_runs.csv dynamically
+function loadTestRuns() {
+  const filePath = path.join(__dirname, 'data', 'test_runs.csv');
+  if (!fs.existsSync(filePath)) return [];
+  const content = fs.readFileSync(filePath, 'utf8');
+  const lines = content.trim().split('\n');
+  if (lines.length < 2) return [];
+
+  const headers = lines[0].split(',').map(h => h.trim());
+  const runsMap = new Map();
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const parts = line.split(',');
+    const row = {};
+    headers.forEach((h, idx) => {
+      const val = parts[idx];
+      row[h] = (h === 'run_id') ? val : +val;
+    });
+
+    if (!runsMap.has(row.run_id)) {
+      runsMap.set(row.run_id, []);
+    }
+    runsMap.get(row.run_id).push(row);
+  }
+
+  // Generate dynamic run summaries
+  const runSummaries = [];
+  for (const [rid, rRows] of runsMap.entries()) {
+    const maxSev = Math.max(...rRows.map(r => r.severity_pct || 0));
+    const hasCav = rRows.some(r => r.label === 1);
+    let label = 'normal';
+    if (maxSev > 0 || hasCav) {
+      label = `cavitation, max severity ${Math.round(maxSev)} %`;
+    }
+    runSummaries.push({
+      run_id: rid,
+      label,
+      total_seconds: rRows.length,
+      max_severity_pct: maxSev,
+      rows: rRows
+    });
+  }
+
+  return runSummaries;
+}
+
 // In-Memory Database Storage
 const readings_history = [];
 const alerts_history = [];
@@ -307,6 +365,13 @@ function getStatusDict() {
     interval: sim.interval,
     tick: sim.tick,
     sim_clock_s: +sim.sim_t.toFixed(1),
+    mode: replay.mode,
+    replay_run_id: replay.selected_run_id,
+    replay_state: replay.state,
+    replay_progress: {
+      current: replay.current_index,
+      total: replay.rows ? replay.rows.length : 60
+    },
     actuators: { ...sim.actuators },
     active_presets: Array.from(sim.active_presets),
     pump: { id: sim.pump_id, name: sim.pump_name },
@@ -326,12 +391,56 @@ function getStatusDict() {
 
 // Simulation Tick Processing
 function processTick() {
-  sim.tick += 1;
-  sim.sim_t += sim.interval;
-
-  const { d, anomaly, physicalCavIntensity } = generateTelemetry();
   const ts = nowISO();
   let err = null;
+  let d;
+  let anomaly = null;
+  let physicalCavIntensity = 0.0;
+
+  if (replay.mode === 'replay') {
+    if (replay.state === 'playing') {
+      if (replay.rows && replay.current_index < replay.rows.length) {
+        const row = replay.rows[replay.current_index];
+        replay.current_index += 1;
+        sim.tick += 1;
+        sim.sim_t = row.time_s !== undefined ? +row.time_s : sim.sim_t + 1.0;
+        d = {
+          suction_pressure: +row.suction_pressure,
+          discharge_pressure: +row.discharge_pressure,
+          flow_rate: +row.flow_rate,
+          vibration_rms: +row.vibration_rms,
+          temperature: +row.temperature,
+          rpm: +row.rpm,
+          motor_current: +(10.2 + 0.016 * row.flow_rate).toFixed(1)
+        };
+        physicalCavIntensity = row.severity_pct ? +(row.severity_pct / 100).toFixed(2) : (row.label === 1 ? 0.6 : 0.0);
+        if (replay.current_index >= replay.rows.length) {
+          replay.state = 'complete';
+        }
+      } else {
+        replay.state = 'complete';
+        if (sim.last) {
+          sim.last.replay_state = 'complete';
+          sim.last.status = 'Run complete';
+          broadcastWS(sim.last);
+          return sim.last;
+        }
+      }
+    } else {
+      // Idle or paused: return current state without advancing timeline
+      return sim.last;
+    }
+  } else {
+    // Manual simulation mode
+    sim.tick += 1;
+    sim.sim_t += sim.interval;
+    const generated = generateTelemetry();
+    d = generated.d;
+    anomaly = generated.anomaly;
+    physicalCavIntensity = generated.physicalCavIntensity;
+  }
+
+  if (!d) return sim.last;
 
   for (const k of RAW_SENSORS) {
     if (d[k] === null || d[k] === undefined) {
@@ -396,17 +505,28 @@ function processTick() {
   readings_history.unshift(readingRecord);
   if (readings_history.length > 5000) readings_history.pop();
 
+  const msgStatus = (replay.mode === 'replay' && replay.state === 'complete')
+    ? 'Run complete'
+    : status;
+
   const msg = {
     type: 'reading',
     ts: ts,
     sim_t: +sim.sim_t.toFixed(1),
     pump: sim.pump_id,
+    mode: replay.mode,
+    replay_run_id: replay.selected_run_id,
+    replay_state: replay.state,
+    replay_progress: {
+      current: replay.current_index,
+      total: replay.rows ? replay.rows.length : 60
+    },
     simulated: true,
     readings: d,
     anomaly: anomaly,
     prediction: pred,
     prediction_history: prediction_history_60.slice(-30),
-    status: status,
+    status: msgStatus,
     data_error: err,
     model_error: model_err,
     threshold_breaches: breaches,
@@ -536,6 +656,100 @@ const server = http.createServer((req, res) => {
     prediction_history_60.length = 0;
     alertMgr.reset();
     return sendJSON(200, getStatusDict());
+  }
+
+  // Toggle Mode: Replay CSV vs Manual Simulation
+  if (pathname === '/api/sim/mode' && req.method === 'POST') {
+    return readBody((err, data) => {
+      const targetMode = (data && data.mode === 'replay') ? 'replay' : 'manual';
+      replay.mode = targetMode;
+      // Reset rolling buffers & chart history on mode switch
+      telemetry_window_30.length = 0;
+      prediction_history_60.length = 0;
+      alertMgr.reset();
+
+      if (targetMode === 'replay') {
+        replay.state = 'idle';
+        replay.current_index = 0;
+        const allRuns = loadTestRuns();
+        if (allRuns.length > 0 && !replay.selected_run_id) {
+          replay.selected_run_id = allRuns[0].run_id;
+          replay.rows = allRuns[0].rows;
+        }
+      }
+      return sendJSON(200, getStatusDict());
+    });
+  }
+
+  // 1. GET /api/replay/runs: list run_ids from data/test_runs.csv with computed labels
+  if (pathname === '/api/replay/runs' && req.method === 'GET') {
+    const runs = loadTestRuns().map(r => ({
+      run_id: r.run_id,
+      label: r.label,
+      total_seconds: r.total_seconds,
+      max_severity_pct: r.max_severity_pct
+    }));
+    return sendJSON(200, runs);
+  }
+
+  // 2. POST /api/replay/select: select a run and load its rows without auto-playing
+  if (pathname === '/api/replay/select' && req.method === 'POST') {
+    return readBody((err, data) => {
+      const rid = data && data.run_id;
+      const allRuns = loadTestRuns();
+      const match = allRuns.find(r => r.run_id === rid);
+      if (match) {
+        replay.selected_run_id = match.run_id;
+        replay.rows = match.rows;
+        replay.current_index = 0;
+        replay.state = 'idle';
+        telemetry_window_30.length = 0;
+        prediction_history_60.length = 0;
+        alertMgr.reset();
+      }
+      return sendJSON(200, {
+        ok: true,
+        selected_run_id: replay.selected_run_id,
+        state: replay.state,
+        total_seconds: replay.rows ? replay.rows.length : 0
+      });
+    });
+  }
+
+  // 3. POST /api/replay/play: begin streaming rows one by one at original pace
+  if (pathname === '/api/replay/play' && req.method === 'POST') {
+    if (!replay.rows || replay.rows.length === 0) {
+      const allRuns = loadTestRuns();
+      const match = allRuns.find(r => r.run_id === replay.selected_run_id) || allRuns[0];
+      if (match) {
+        replay.selected_run_id = match.run_id;
+        replay.rows = match.rows;
+      }
+    }
+    if (replay.state === 'complete') {
+      replay.current_index = 0;
+      telemetry_window_30.length = 0;
+      prediction_history_60.length = 0;
+      alertMgr.reset();
+    }
+    replay.state = 'playing';
+    return sendJSON(200, { ok: true, state: replay.state, current_index: replay.current_index });
+  }
+
+  // 4. POST /api/replay/pause: pause playback
+  if (pathname === '/api/replay/pause' && req.method === 'POST') {
+    replay.state = 'paused';
+    return sendJSON(200, { ok: true, state: replay.state });
+  }
+
+  // 5. POST /api/replay/restart: reset to index 0, idle state, clear chart
+  if (pathname === '/api/replay/restart' && req.method === 'POST') {
+    replay.current_index = 0;
+    replay.state = 'idle';
+    telemetry_window_30.length = 0;
+    prediction_history_60.length = 0;
+    alertMgr.reset();
+    return sendJSON(200, { ok: true, state: replay.state, current_index: 0 });
   }
 
   // Physical Actuation API: Directly manipulate physical pump conditions
@@ -745,6 +959,213 @@ const server = http.createServer((req, res) => {
       } catch (e) {}
     }
     return sendJSON(200, {});
+  }
+
+  // Phase 5 Data & Method overview endpoint (reads strictly from real CSV and metrics files)
+  if (pathname === '/api/data/overview' && req.method === 'GET') {
+    try {
+      const trainCsvPath = path.join(__dirname, 'data', 'nexcav_train.csv');
+      const testCsvPath = path.join(__dirname, 'data', 'test_runs.csv');
+      const metricsPath = path.join(__dirname, 'models', 'metrics.json');
+
+      let metricsData = {};
+      if (fs.existsSync(metricsPath)) {
+        metricsData = JSON.parse(fs.readFileSync(metricsPath, 'utf8'));
+      }
+
+      // Read first 10 rows of test CSV
+      const first10Rows = [];
+      const healthyPlot = [];
+      const cavPlot = [];
+
+      if (fs.existsSync(testCsvPath)) {
+        const lines = fs.readFileSync(testCsvPath, 'utf8').split('\n').filter(Boolean);
+        const headers = lines[0].trim().split(',');
+
+        for (let i = 1; i < Math.min(11, lines.length); i++) {
+          const cols = lines[i].trim().split(',');
+          const rowObj = {};
+          headers.forEach((h, idx) => { rowObj[h] = cols[idx]; });
+          first10Rows.push(rowObj);
+        }
+
+        // Find healthy run ('run_004_normal') and cavitation run ('run_005_developed')
+        for (let i = 1; i < lines.length; i++) {
+          const cols = lines[i].trim().split(',');
+          const rId = cols[0];
+          const t = +cols[1];
+          const sp = +cols[2];
+          const dp = +cols[3];
+          const fl = +cols[4];
+          const vib = +cols[5];
+          const sev = +cols[8];
+          const lbl = +cols[9];
+
+          if (rId === 'run_004_normal' && healthyPlot.length < 35) {
+            healthyPlot.push({ t, vib, sp, dp, fl, sev, lbl });
+          } else if (rId === 'run_005_developed' && cavPlot.length < 35) {
+            cavPlot.push({ t, vib, sp, dp, fl, sev, lbl });
+          }
+        }
+      }
+
+      // Read feedback log summary
+      let feedbackSummary = { total_alerts: 0, correct: 0, false_alarms: 0, unreviewed: 0, false_alarm_rate: 0, recent_entries: [] };
+      const feedbackCsvPath = path.join(__dirname, 'data', 'feedback_log.csv');
+      if (fs.existsSync(feedbackCsvPath)) {
+        const fLines = fs.readFileSync(feedbackCsvPath, 'utf8').split('\n').filter(Boolean);
+        if (fLines.length > 1) {
+          const fHeaders = fLines[0].trim().split(',');
+          const fRows = [];
+          for (let i = 1; i < fLines.length; i++) {
+            const cols = fLines[i].trim().split(',');
+            const rObj = {};
+            fHeaders.forEach((h, idx) => { rObj[h] = cols[idx]; });
+            fRows.push(rObj);
+          }
+          let cCount = 0;
+          let faCount = 0;
+          let uCount = 0;
+          fRows.forEach(r => {
+            if (r.verdict === 'correct') cCount++;
+            else if (r.verdict === 'false_alarm') faCount++;
+            else uCount++;
+          });
+          const reviewed = cCount + faCount;
+          feedbackSummary = {
+            total_alerts: fRows.length,
+            correct: cCount,
+            false_alarms: faCount,
+            unreviewed: uCount,
+            false_alarm_rate: reviewed > 0 ? +(faCount / reviewed * 100).toFixed(1) : 0,
+            recent_entries: fRows.slice(-10).reverse()
+          };
+        }
+      }
+
+      return sendJSON(200, {
+        ok: true,
+        metrics: metricsData,
+        first_10_rows: first10Rows,
+        plots: {
+          healthy: healthyPlot,
+          cavitation: cavPlot
+        },
+        feedback_summary: feedbackSummary
+      });
+    } catch (err) {
+      return sendJSON(500, { ok: false, error: err.message });
+    }
+  }
+
+  // POST /api/feedback/log: Log alert or update verdict in data/feedback_log.csv
+  if (pathname === '/api/feedback/log' && req.method === 'POST') {
+    return readBody((err, body) => {
+      if (err || !body || !body.alert_id) {
+        return sendJSON(400, { ok: false, error: 'alert_id required' });
+      }
+
+      try {
+        const feedbackCsvPath = path.join(__dirname, 'data', 'feedback_log.csv');
+        const header = 'alert_id,timestamp,run_or_session_id,mode,alert_level,probability,suction_pressure,discharge_pressure,flow_rate,vibration_rms,temperature,motor_current,active_faults,verdict';
+
+        let lines = [];
+        if (fs.existsSync(feedbackCsvPath)) {
+          lines = fs.readFileSync(feedbackCsvPath, 'utf8').split('\n').filter(Boolean);
+        } else {
+          lines.push(header);
+        }
+
+        const alertId = String(body.alert_id);
+        const timestamp = body.timestamp || new Date().toISOString();
+        const runOrSession = body.run_or_session_id || 'manual_session';
+        const opMode = body.mode || 'manual';
+        const alertLevel = body.alert_level || 'warning';
+        const prob = body.probability !== undefined ? (+body.probability).toFixed(4) : '0.0000';
+        const sp = body.suction_pressure !== undefined ? (+body.suction_pressure).toFixed(2) : '2.00';
+        const dp = body.discharge_pressure !== undefined ? (+body.discharge_pressure).toFixed(2) : '6.50';
+        const fl = body.flow_rate !== undefined ? (+body.flow_rate).toFixed(1) : '100.0';
+        const vib = body.vibration_rms !== undefined ? (+body.vibration_rms).toFixed(2) : '1.85';
+        const temp = body.temperature !== undefined ? (+body.temperature).toFixed(1) : '52.0';
+        const curr = body.motor_current !== undefined ? (+body.motor_current).toFixed(1) : '11.8';
+        const faults = String(body.active_faults || 'none').replace(/,/g, ';');
+        const verdict = body.verdict || 'unreviewed';
+
+        // Check if alert_id exists already
+        let foundIdx = -1;
+        for (let i = 1; i < lines.length; i++) {
+          if (lines[i].split(',')[0] === alertId) {
+            foundIdx = i;
+            break;
+          }
+        }
+
+        const newRow = `${alertId},${timestamp},${runOrSession},${opMode},${alertLevel},${prob},${sp},${dp},${fl},${vib},${temp},${curr},${faults},${verdict}`;
+
+        if (foundIdx > 0) {
+          // Update verdict on existing alert row
+          const cols = lines[foundIdx].split(',');
+          cols[13] = verdict; // update verdict
+          lines[foundIdx] = cols.join(',');
+        } else {
+          // Append new alert row
+          lines.push(newRow);
+        }
+
+        fs.writeFileSync(feedbackCsvPath, lines.join('\n') + '\n', 'utf8');
+        return sendJSON(200, { ok: true, alert_id: alertId, verdict });
+      } catch (logErr) {
+        return sendJSON(500, { ok: false, error: logErr.message });
+      }
+    });
+  }
+
+  // GET /api/feedback/summary: Feedback review metrics from feedback_log.csv
+  if (pathname === '/api/feedback/summary' && req.method === 'GET') {
+    const feedbackCsvPath = path.join(__dirname, 'data', 'feedback_log.csv');
+    if (!fs.existsSync(feedbackCsvPath)) {
+      return sendJSON(200, {
+        ok: true,
+        total_alerts: 0,
+        correct: 0,
+        false_alarms: 0,
+        unreviewed: 0,
+        false_alarm_rate: 0,
+        recent_entries: []
+      });
+    }
+
+    try {
+      const fLines = fs.readFileSync(feedbackCsvPath, 'utf8').split('\n').filter(Boolean);
+      const fHeaders = fLines[0].trim().split(',');
+      const fRows = [];
+      for (let i = 1; i < fLines.length; i++) {
+        const cols = fLines[i].trim().split(',');
+        const rObj = {};
+        fHeaders.forEach((h, idx) => { rObj[h] = cols[idx]; });
+        fRows.push(rObj);
+      }
+      let cCount = 0;
+      let faCount = 0;
+      let uCount = 0;
+      fRows.forEach(r => {
+        if (r.verdict === 'correct') cCount++;
+        else if (r.verdict === 'false_alarm') faCount++;
+        else uCount++;
+      });
+      const reviewed = cCount + faCount;
+      return sendJSON(200, {
+        ok: true,
+        total_alerts: fRows.length,
+        correct: cCount,
+        false_alarms: faCount,
+        unreviewed: uCount,
+        false_alarm_rate: reviewed > 0 ? +(faCount / reviewed * 100).toFixed(1) : 0,
+        recent_entries: fRows.slice(-15).reverse()
+      });
+    } catch (e) {
+      return sendJSON(500, { ok: false, error: e.message });
+    }
   }
 
   if (pathname === '/api/model/history' && req.method === 'GET') {

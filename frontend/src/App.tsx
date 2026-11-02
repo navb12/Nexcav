@@ -11,6 +11,27 @@ import { CavitationProbabilityChart, CORRECTIVE_ACTIONS, WARN_PROB, DETECT_PROB 
 import { AnalyticsPanel } from './components/MLMetricsPanel.tsx';
 import { DataMethodPanel } from './components/DataMethodPanel.tsx';
 import { CriticalAlarmModal } from './components/CriticalAlarmModal.tsx';
+import { PredictiveMaintenanceReport } from './components/PredictiveMaintenanceReport.tsx';
+
+// Fault Information Definitions for Manual Fault Popovers
+const FAULT_INFO_DESCRIPTIONS: Record<string, { title: string; desc: string }> = {
+  suction_restriction: {
+    title: 'Suction Restriction',
+    desc: 'Reduces suction pressure and NPSHa, potentially inducing hydraulic cavitation at the impeller eye.'
+  },
+  bearing_wear: {
+    title: 'Bearing Wear',
+    desc: 'Increases friction, driving up bearing housing temperature and high-frequency mechanical raceway vibration.'
+  },
+  discharge_throttling: {
+    title: 'Discharge Restriction',
+    desc: 'Changes discharge pressure and reduces flow delivery through downstream valve throttling.'
+  },
+  vibration_unbalance: {
+    title: 'Vibration Unbalance',
+    desc: 'Introduces additional 1X rotational vibration without directly triggering hydraulic cavitation.'
+  }
+};
 
 // Severity Stage Cutoffs (Configurable in one named constant)
 export const SEVERITY_THRESHOLDS = {
@@ -41,8 +62,11 @@ export function getSeverityColor(stage: 'Normal' | 'Incipient' | 'Developed' | '
 }
 
 export const App: React.FC = () => {
-  // Navigation tabs: Live | Model | Data and method (renamed from History)
-  const [activeTab, setActiveTab] = useState<'overview' | 'analytics' | 'history'>('overview');
+  // Navigation tabs: Live | Model | Reports | Data and method
+  const [activeTab, setActiveTab] = useState<'overview' | 'analytics' | 'reports' | 'history'>('overview');
+
+  // Feature 2: Manual Fault Information Popover State
+  const [activeInfoPopover, setActiveInfoPopover] = useState<string | null>(null);
 
   // Connection & Telemetry State
   const [connected, setConnected] = useState<boolean>(false);
@@ -179,6 +203,13 @@ export const App: React.FC = () => {
       if (wsRef.current) wsRef.current.close();
     };
   }, [fetchAuxiliaryData]);
+
+  // Close active fault info popover on outside click
+  useEffect(() => {
+    const handleOutsideClick = () => setActiveInfoPopover(null);
+    window.addEventListener('click', handleOutsideClick);
+    return () => window.removeEventListener('click', handleOutsideClick);
+  }, []);
 
   // Physical Actuation Handlers
   const handleActuate = async (actuator: string, delta: number, intensity?: number) => {
@@ -566,6 +597,22 @@ export const App: React.FC = () => {
             }}
           >
             Model
+          </button>
+
+          <button
+            onClick={() => setActiveTab('reports')}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: activeTab === 'reports' ? '#f8fafc' : '#94a3b8',
+              fontWeight: activeTab === 'reports' ? 700 : 500,
+              fontSize: '14px',
+              paddingBottom: '3px',
+              borderBottom: activeTab === 'reports' ? '2.5px solid #38bdf8' : '2.5px solid transparent',
+              cursor: 'pointer'
+            }}
+          >
+            Reports
           </button>
 
           <button
@@ -1003,60 +1050,128 @@ export const App: React.FC = () => {
                 { id: 'vibration_unbalance', label: 'Rotor unbalance' }
               ].map(f => {
                 const sev = faultSeverities[f.id] || 0;
+                const isPopoverOpen = activeInfoPopover === f.id;
                 return (
-                  <div key={f.id} style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    backgroundColor: '#111827',
-                    border: '1px solid #1e293b',
-                    borderRadius: '4px',
-                    padding: '3px 8px'
-                  }}>
-                    <span style={{ fontSize: '11.5px', color: '#cbd5e1' }}>{f.label}</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <button
-                        onClick={() => handleAdjustFault(f.id, -10)}
-                        disabled={mode === 'replay'}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: mode === 'replay' ? '#475569' : '#cbd5e1',
-                          fontSize: '15px',
+                  <div key={f.id} style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      backgroundColor: '#111827',
+                      border: '1px solid #1e293b',
+                      borderRadius: '4px',
+                      padding: '3px 8px'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontSize: '11.5px', color: '#cbd5e1' }}>{f.label}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveInfoPopover(isPopoverOpen ? null : f.id);
+                          }}
+                          style={{
+                            background: isPopoverOpen ? '#38bdf8' : 'rgba(51, 65, 85, 0.5)',
+                            color: isPopoverOpen ? '#0f172a' : '#94a3b8',
+                            border: '1px solid #475569',
+                            borderRadius: '50%',
+                            width: '15px',
+                            height: '15px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '10px',
+                            cursor: 'pointer',
+                            padding: 0,
+                            lineHeight: 1
+                          }}
+                          title={`Physical effects of ${f.label}`}
+                          aria-label={`Physical effects of ${f.label}`}
+                        >
+                          ⓘ
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <button
+                          onClick={() => handleAdjustFault(f.id, -10)}
+                          disabled={mode === 'replay'}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: mode === 'replay' ? '#475569' : '#cbd5e1',
+                            fontSize: '15px',
+                            fontWeight: 700,
+                            cursor: mode === 'replay' ? 'not-allowed' : 'pointer',
+                            padding: '0 6px'
+                          }}
+                        >
+                          -
+                        </button>
+                        <span style={{
+                          fontSize: '12px',
                           fontWeight: 700,
-                          cursor: mode === 'replay' ? 'not-allowed' : 'pointer',
-                          padding: '0 6px'
-                        }}
-                      >
-                        -
-                      </button>
-                      <span style={{
-                        fontSize: '12px',
-                        fontWeight: 700,
-                        color: sev > 0 ? '#38bdf8' : '#64748b',
-                        fontFamily: 'monospace',
-                        width: '38px',
-                        textAlign: 'center',
-                        fontVariantNumeric: 'tabular-nums'
-                      }}>
-                        {sev} %
-                      </span>
-                      <button
-                        onClick={() => handleAdjustFault(f.id, +10)}
-                        disabled={mode === 'replay'}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: mode === 'replay' ? '#475569' : '#cbd5e1',
-                          fontSize: '15px',
-                          fontWeight: 700,
-                          cursor: mode === 'replay' ? 'not-allowed' : 'pointer',
-                          padding: '0 6px'
-                        }}
-                      >
-                        +
-                      </button>
+                          color: sev > 0 ? '#38bdf8' : '#64748b',
+                          fontFamily: 'monospace',
+                          width: '38px',
+                          textAlign: 'center',
+                          fontVariantNumeric: 'tabular-nums'
+                        }}>
+                          {sev} %
+                        </span>
+                        <button
+                          onClick={() => handleAdjustFault(f.id, +10)}
+                          disabled={mode === 'replay'}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: mode === 'replay' ? '#475569' : '#cbd5e1',
+                            fontSize: '15px',
+                            fontWeight: 700,
+                            cursor: mode === 'replay' ? 'not-allowed' : 'pointer',
+                            padding: '0 6px'
+                          }}
+                        >
+                          +
+                        </button>
+                      </div>
                     </div>
+
+                    {/* Compact Popover Explaining Physical Effects */}
+                    {isPopoverOpen && (
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                          backgroundColor: '#0d1117',
+                          border: '1px solid #38bdf8',
+                          borderRadius: '4px',
+                          padding: '7px 9px',
+                          fontSize: '11px',
+                          color: '#cbd5e1',
+                          lineHeight: 1.35,
+                          boxShadow: '0 4px 14px rgba(0,0,0,0.6)',
+                          zIndex: 20
+                        }}
+                      >
+                        <div style={{ fontWeight: 700, color: '#38bdf8', marginBottom: '2px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>{FAULT_INFO_DESCRIPTIONS[f.id]?.title}</span>
+                          <button
+                            type="button"
+                            onClick={() => setActiveInfoPopover(null)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#94a3b8',
+                              fontSize: '11px',
+                              cursor: 'pointer',
+                              padding: 0
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <div>{FAULT_INFO_DESCRIPTIONS[f.id]?.desc}</div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1133,6 +1248,19 @@ export const App: React.FC = () => {
       {activeTab === 'analytics' && (
         <main style={{ flex: 1, padding: '16px 24px', overflowY: 'auto' }}>
           <AnalyticsPanel metrics={metrics} />
+        </main>
+      )}
+
+      {/* Reports Tab: Predictive Maintenance Report */}
+      {activeTab === 'reports' && (
+        <main style={{ flex: 1, padding: '16px 24px', overflowY: 'auto' }}>
+          <PredictiveMaintenanceReport
+            currentReadings={currentReadings}
+            probability={prob}
+            severityStage={severityStage}
+            mode={mode}
+            selectedRunId={selectedRunId}
+          />
         </main>
       )}
 

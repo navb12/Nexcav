@@ -1251,6 +1251,248 @@ const server = http.createServer((req, res) => {
     return sendJSON(200, { ok: true });
   }
 
+  // --- PREDICTIVE MAINTENANCE REPORT APIS ---
+  // GET /api/reports/events: Read persistent event history from data/feedback_log.csv + memory
+  if (pathname === '/api/reports/events' && req.method === 'GET') {
+    try {
+      const feedbackCsvPath = path.join(__dirname, 'data', 'feedback_log.csv');
+      const events = [];
+      const seenIds = new Set();
+
+      if (fs.existsSync(feedbackCsvPath)) {
+        const lines = fs.readFileSync(feedbackCsvPath, 'utf8').split('\n').filter(Boolean);
+        if (lines.length > 1) {
+          const headers = lines[0].trim().split(',');
+          for (let i = 1; i < lines.length; i++) {
+            const cols = lines[i].trim().split(',');
+            const r = {};
+            headers.forEach((h, idx) => { r[h] = cols[idx]; });
+            const alertId = r.alert_id || `evt_${i}`;
+            seenIds.add(alertId);
+
+            let vStatus = r.verdict || 'unreviewed';
+            if (vStatus === 'correct') vStatus = 'confirmed_alarm';
+
+            const probVal = parseFloat(r.probability) || 0;
+            const sevStage = probVal >= 0.8 ? 'Severe' : probVal >= 0.5 ? 'Developed' : probVal >= 0.25 ? 'Incipient' : 'Normal';
+            const classification = r.alert_level === 'predicted'
+              ? 'Cavitation Predicted'
+              : r.alert_level === 'warning'
+              ? 'Early Cavitation Warning'
+              : 'Manual / Observed Event';
+
+            events.push({
+              alert_id: alertId,
+              timestamp: r.timestamp || new Date().toISOString(),
+              run_or_session_id: r.run_or_session_id || 'manual_session',
+              mode: r.mode || 'manual',
+              alert_level: r.alert_level || 'warning',
+              classification: classification,
+              probability: probVal,
+              severity: sevStage,
+              sensors: {
+                suction_pressure: parseFloat(r.suction_pressure) || 2.0,
+                discharge_pressure: parseFloat(r.discharge_pressure) || 6.5,
+                flow_rate: parseFloat(r.flow_rate) || 100.0,
+                vibration_rms: parseFloat(r.vibration_rms) || 1.8,
+                temperature: parseFloat(r.temperature) || 52.0,
+                motor_current: parseFloat(r.motor_current) || 11.8,
+                rpm: 2950
+              },
+              active_faults: r.active_faults || 'none',
+              duration_s: parseFloat(r.duration_s) || 12,
+              validation_status: vStatus,
+              notes: r.notes || ''
+            });
+          }
+        }
+      }
+
+      // Merge any alerts currently in alerts_history that are not yet in feedback_log.csv
+      for (const a of alerts_history) {
+        const aId = String(a.id);
+        if (!seenIds.has(aId)) {
+          seenIds.add(aId);
+          const probVal = a.model_score || 0.5;
+          const sevStage = probVal >= 0.8 ? 'Severe' : probVal >= 0.5 ? 'Developed' : 'Incipient';
+          let vStatus = 'unreviewed';
+          if (a.validation && a.validation.classification) {
+            vStatus = a.validation.classification;
+            if (vStatus === 'confirmed_cavitation') vStatus = 'confirmed_alarm';
+            if (vStatus === 'false_positive') vStatus = 'false_alarm';
+          }
+          let duration = 10;
+          if (a.resolved_ts && a.ts) {
+            duration = Math.max(1, Math.round((new Date(a.resolved_ts).getTime() - new Date(a.ts).getTime()) / 1000));
+          }
+          events.push({
+            alert_id: aId,
+            timestamp: a.ts || new Date().toISOString(),
+            run_or_session_id: 'scada_session',
+            mode: 'manual',
+            alert_level: a.severity >= 3 ? 'predicted' : 'warning',
+            classification: a.category || 'Cavitation Predicted',
+            probability: probVal,
+            severity: sevStage,
+            sensors: {
+              suction_pressure: sim.last ? (sim.last.readings?.suction_pressure || 2.0) : 2.0,
+              discharge_pressure: sim.last ? (sim.last.readings?.discharge_pressure || 6.5) : 6.5,
+              flow_rate: sim.last ? (sim.last.readings?.flow_rate || 100.0) : 100.0,
+              vibration_rms: sim.last ? (sim.last.readings?.vibration_rms || 1.8) : 1.8,
+              temperature: sim.last ? (sim.last.readings?.temperature || 52.0) : 52.0,
+              motor_current: sim.last ? (sim.last.readings?.motor_current || 11.8) : 11.8,
+              rpm: 2950
+            },
+            active_faults: a.explanation || 'SCADA threshold breach',
+            duration_s: duration,
+            validation_status: vStatus,
+            notes: a.validation?.notes || ''
+          });
+        }
+      }
+
+      // Reverse so newest events appear first
+      events.reverse();
+
+      // Compute statistics
+      let confirmed_alarm = 0;
+      let false_alarm = 0;
+      let missed_fault = 0;
+      let confirmed_normal = 0;
+      let unreviewed = 0;
+
+      for (const e of events) {
+        if (e.validation_status === 'confirmed_alarm') confirmed_alarm++;
+        else if (e.validation_status === 'false_alarm') false_alarm++;
+        else if (e.validation_status === 'missed_fault') missed_fault++;
+        else if (e.validation_status === 'confirmed_normal') confirmed_normal++;
+        else unreviewed++;
+      }
+
+      const reviewedCount = confirmed_alarm + false_alarm;
+      const precisionPct = reviewedCount > 0 ? +((confirmed_alarm / reviewedCount) * 100).toFixed(1) : 0;
+
+      return sendJSON(200, {
+        ok: true,
+        events,
+        summary: {
+          total: events.length,
+          confirmed_alarm,
+          false_alarm,
+          missed_fault,
+          confirmed_normal,
+          unreviewed,
+          precision_pct: precisionPct
+        }
+      });
+    } catch (e) {
+      return sendJSON(500, { ok: false, error: e.message });
+    }
+  }
+
+  // POST /api/reports/events/:id/validate: Update event classification
+  if (pathname.match(/^\/api\/reports\/events\/[^\/]+\/validate$/) && req.method === 'POST') {
+    const eventId = decodeURIComponent(pathname.split('/')[4]);
+    return readBody((err, reqBody) => {
+      if (err || !reqBody || !reqBody.validation_status) {
+        return sendJSON(400, { ok: false, error: 'validation_status is required' });
+      }
+
+      try {
+        const feedbackCsvPath = path.join(__dirname, 'data', 'feedback_log.csv');
+        let updated = false;
+
+        if (fs.existsSync(feedbackCsvPath)) {
+          const lines = fs.readFileSync(feedbackCsvPath, 'utf8').split('\n').filter(Boolean);
+          if (lines.length > 0) {
+            const headers = lines[0].trim().split(',');
+            const verdictIdx = headers.indexOf('verdict');
+            if (verdictIdx !== -1) {
+              for (let i = 1; i < lines.length; i++) {
+                const cols = lines[i].trim().split(',');
+                if (cols[0] === eventId) {
+                  cols[verdictIdx] = reqBody.validation_status;
+                  lines[i] = cols.join(',');
+                  updated = true;
+                  break;
+                }
+              }
+              if (updated) {
+                fs.writeFileSync(feedbackCsvPath, lines.join('\n') + '\n', 'utf8');
+              }
+            }
+          }
+        }
+
+        // Also update memory alert if present
+        const numId = parseInt(eventId, 10);
+        if (!isNaN(numId)) {
+          const alert = alerts_history.find(a => a.id === numId);
+          if (alert) {
+            alert.validation = {
+              classification: reqBody.validation_status,
+              notes: reqBody.notes || '',
+              timestamp: nowISO()
+            };
+          }
+        }
+
+        // Persist to validated_incidents.json for record-keeping
+        const valDir = path.join(__dirname, 'models');
+        if (!fs.existsSync(valDir)) fs.mkdirSync(valDir, { recursive: true });
+        validated_incidents.unshift({
+          alert_id: eventId,
+          timestamp: nowISO(),
+          classification: reqBody.validation_status,
+          notes: reqBody.notes || ''
+        });
+        fs.writeFileSync(path.join(valDir, 'validated_incidents.json'), JSON.stringify(validated_incidents, null, 2));
+
+        return sendJSON(200, { ok: true, alert_id: eventId, validation_status: reqBody.validation_status });
+      } catch (e) {
+        return sendJSON(500, { ok: false, error: e.message });
+      }
+    });
+  }
+
+  // POST /api/reports/events/record: Allow operator to record an observed event / missed fault
+  if (pathname === '/api/reports/events/record' && req.method === 'POST') {
+    return readBody((err, body) => {
+      try {
+        const feedbackCsvPath = path.join(__dirname, 'data', 'feedback_log.csv');
+        const header = 'alert_id,timestamp,run_or_session_id,mode,alert_level,probability,suction_pressure,discharge_pressure,flow_rate,vibration_rms,temperature,motor_current,active_faults,verdict,duration_s';
+        let lines = [];
+        if (fs.existsSync(feedbackCsvPath)) {
+          lines = fs.readFileSync(feedbackCsvPath, 'utf8').split('\n').filter(Boolean);
+        } else {
+          lines.push(header);
+        }
+
+        const id = `op_event_${Date.now()}`;
+        const ts = new Date().toISOString();
+        const mode = replay.mode || 'manual';
+        const vStatus = body.validation_status || 'missed_fault';
+        const prob = body.probability !== undefined ? (+body.probability).toFixed(4) : (sim.last?.prediction?.model_score || 0.5).toFixed(4);
+        const sp = (sim.last?.readings?.suction_pressure ?? 2.0).toFixed(2);
+        const dp = (sim.last?.readings?.discharge_pressure ?? 6.5).toFixed(2);
+        const fl = (sim.last?.readings?.flow_rate ?? 100.0).toFixed(1);
+        const vib = (sim.last?.readings?.vibration_rms ?? 1.8).toFixed(2);
+        const temp = (sim.last?.readings?.temperature ?? 52.0).toFixed(1);
+        const curr = (sim.last?.readings?.motor_current ?? 11.8).toFixed(1);
+        const faults = String(body.active_faults || Array.from(sim.active_presets).join(';') || 'operator_logged').replace(/,/g, ';');
+        const duration = body.duration_s || 15;
+
+        const row = `${id},${ts},manual_session,${mode},manual,${prob},${sp},${dp},${fl},${vib},${temp},${curr},${faults},${vStatus},${duration}`;
+        lines.push(row);
+        fs.writeFileSync(feedbackCsvPath, lines.join('\n') + '\n', 'utf8');
+
+        return sendJSON(200, { ok: true, alert_id: id, validation_status: vStatus });
+      } catch (e) {
+        return sendJSON(500, { ok: false, error: e.message });
+      }
+    });
+  }
+
   // Serve Frontend Production Build
   const distDir = path.join(__dirname, 'frontend', 'dist');
   if (fs.existsSync(distDir)) {

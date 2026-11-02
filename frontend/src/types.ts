@@ -201,3 +201,77 @@ export interface RetrainingResult {
   candidate_metrics: { accuracy: number; f1_macro: number; recall_cavitation: number };
   recommendation: 'deploy' | 'reject';
 }
+
+export type EventValidationStatus =
+  | 'confirmed_alarm'
+  | 'false_alarm'
+  | 'missed_fault'
+  | 'confirmed_normal'
+  | 'unreviewed';
+
+export interface ReportSensorSnapshot {
+  suction_pressure: number;
+  discharge_pressure: number;
+  flow_rate: number;
+  vibration_rms: number;
+  temperature: number;
+  motor_current?: number;
+  rpm?: number;
+}
+
+export interface ReportEventItem {
+  alert_id: string;
+  timestamp: string;
+  run_or_session_id?: string;
+  mode?: string;
+  alert_level: 'warning' | 'predicted' | 'manual';
+  classification: string;
+  probability: number;
+  severity: string;
+  sensors: ReportSensorSnapshot;
+  active_faults: string;
+  duration_s: number;
+  validation_status: EventValidationStatus;
+  notes?: string;
+}
+
+export interface ReportEventSummary {
+  total: number;
+  confirmed_alarm: number;
+  false_alarm: number;
+  missed_fault: number;
+  confirmed_normal: number;
+  unreviewed: number;
+  precision_pct: number;
+}
+
+export interface MaintenanceRecommendation {
+  id: string;
+  subsystem: 'hydraulic' | 'mechanical' | 'thermal' | 'flow';
+  title: string;
+  evidence: string;
+  action: string;
+  priority: 'Critical' | 'High' | 'Medium' | 'Low';
+  metric: string;
+  measured_value: string;
+  nominal_target: string;
+}
+
+export interface SubsystemHealth {
+  score: number;
+  status: string;
+  metricLabel: string;
+  metricValue: string;
+  benchmark: string;
+  description: string;
+}
+
+export interface PumpHealthAssessment {
+  score: number;
+  priority: 'Critical' | 'High' | 'Medium' | 'Low';
+  status_summary: string;
+  hydraulic: SubsystemHealth;
+  mechanical: SubsystemHealth;
+  thermal: SubsystemHealth;
+  flow: SubsystemHealth;
+}

@@ -1,5 +1,5 @@
 alert_id,timestamp,run_or_session_id,mode,alert_level,probability,suction_pressure,discharge_pressure,flow_rate,vibration_rms,temperature,motor_current,active_faults,verdict
-warn_291_1793633040266,2026-11-02T15:24:00.266Z,manual_session,manual,warning,0.3499,2.07,6.52,100.0,1.79,55.4,12.0,bearing_wear:10%,false_alarm
+warn_291_1793633040266,2026-11-02T15:24:00.266Z,manual_session,manual,warning,0.3499,2.07,6.52,100.0,1.79,55.4,12.0,bearing_wear:10%,confirmed_alarm
 pred_314_1793633057433,2026-11-02T15:24:17.434Z,manual_session,manual,predicted,0.5048,1.90,6.59,95.1,2.03,58.0,11.9,suction_restriction:10%;discharge_throttling:10%;bearing_wear:20%,acknowledged
 pred_357_1793633100959,2026-11-02T15:25:00.959Z,manual_session,manual,predicted,0.5725,1.91,6.54,96.7,2.09,57.6,12.0,none,unreviewed
 warn_359_1793633101869,2026-11-02T15:25:01.869Z,manual_session,manual,warning,0.4171,2.02,6.50,100.0,1.77,52.1,11.8,none,unreviewed
@@ -37,3 +37,15 @@ warn_18_1793633974143,2026-11-02T15:39:34.143Z,manual_session,manual,warning,0.4
 warn_19_1793633974322,2026-11-02T15:39:34.322Z,manual_session,manual,warning,0.4384,2.04,6.53,98.9,1.86,52.4,11.9,none,unreviewed
 warn_20_1793633974448,2026-11-02T15:39:34.448Z,manual_session,manual,warning,0.4166,2.05,6.49,100.0,1.92,52.8,11.8,none,unreviewed
 warn_21_1793633974576,2026-11-02T15:39:34.576Z,manual_session,manual,warning,0.3826,2.04,6.46,99.3,1.82,52.6,11.9,none,unreviewed
+op_event_1793635964797,2026-11-02T16:12:44.797Z,manual_session,manual,manual,0.2200,2.04,6.51,100.6,1.95,52.7,11.9,operator_logged,missed_fault,15
+warn_532_1793636277767,2026-11-02T16:17:57.767Z,manual_session,manual,warning,0.3173,1.92,6.58,96.3,1.91,52.6,11.7,suction_restriction:10%;discharge_throttling:10%,acknowledged
+warn_558_1793636300027,2026-11-02T16:18:20.027Z,manual_session,manual,warning,0.3153,1.92,6.55,96.6,2.02,52.7,11.8,suction_restriction:10%;discharge_throttling:10%;vibration_unbalance:20%,unreviewed
+warn_565_1793636307125,2026-11-02T16:18:27.125Z,manual_session,manual,warning,0.3367,1.92,6.54,96.8,2.01,52.4,11.8,suction_restriction:10%;discharge_throttling:10%;vibration_unbalance:20%,acknowledged
+pred_568_1793636308133,2026-11-02T16:18:28.133Z,manual_session,manual,predicted,0.5405,1.90,6.57,96.1,1.97,55.1,11.8,suction_restriction:10%;discharge_throttling:10%;bearing_wear:10%;vibration_unbalance:20%,confirmed_alarm
+pred_621_1793636362609,2026-11-02T16:19:22.609Z,manual_session,manual,predicted,0.5894,1.94,6.56,96.6,1.99,55.2,11.7,none,unreviewed
+warn_623_1793636362756,2026-11-02T16:19:22.756Z,manual_session,manual,warning,0.4526,2.06,6.51,99.5,1.83,52.5,11.8,none,unreviewed
+warn_624_1793636364479,2026-11-02T16:19:24.479Z,manual_session,manual,warning,0.4197,2.04,6.51,101.3,1.84,52.4,11.9,none,unreviewed
+warn_625_1793636364621,2026-11-02T16:19:24.621Z,manual_session,manual,warning,0.3665,2.05,6.49,99.8,1.71,52.6,11.9,none,unreviewed
+warn_626_1793636364765,2026-11-02T16:19:24.765Z,manual_session,manual,warning,0.3133,2.06,6.51,99.9,1.84,52.7,11.8,none,unreviewed
+warn_628_1793636364906,2026-11-02T16:19:24.906Z,manual_session,manual,warning,0.3324,2.04,6.51,100.4,1.81,52.7,11.8,none,unreviewed
+warn_629_1793636365065,2026-11-02T16:19:25.065Z,manual_session,manual,warning,0.2923,2.05,6.54,100.2,1.85,52.3,11.9,none,unreviewed

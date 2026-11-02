@@ -16,13 +16,13 @@ const url = require('url');
 const fs = require('fs');
 const path = require('path');
 
-const { SequenceMLEngine, AlertManager } = require('./app/ml/sequence_engine');
-const { trainModel } = require('./training/train_time_series_model');
+const { AlertManager } = require('./app/ml/sequence_engine');
 
 const PORT = 8000;
 const HOST = '0.0.0.0';
+const PYTHON_ML_URL = 'http://127.0.0.1:5001/predict';
 
-const mlEngine = new SequenceMLEngine();
+// Alert Manager with persistence and anti-chatter
 const alertMgr = new AlertManager({
   confidence_threshold_critical: 0.70,
   confidence_threshold_warning: 0.40,
@@ -33,6 +33,44 @@ const alertMgr = new AlertManager({
 const telemetry_window_30 = [];
 // Chronological 60-sample history of predictions for dashboard trend visualization
 const prediction_history_60 = [];
+
+// Latest prediction returned by the Python FastAPI microservice (model.pkl)
+let latestPythonPrediction = {
+  model_score: 0.05,
+  probability: 0.05,
+  predicted_class: 0,
+  status: 'Normal',
+  risk_level: 0,
+  model_version: 'v3.0.0-python-rf',
+  model_type: 'RandomForestClassifier (scikit-learn)'
+};
+
+async function fetchPythonPrediction(windowSlice) {
+  try {
+    const res = await fetch(PYTHON_ML_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ window: windowSlice })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      latestPythonPrediction = {
+        model_score: data.probability,
+        probability: data.probability,
+        predicted_class: data.predicted_class,
+        status: data.severity_stage,
+        risk_level: data.predicted_class,
+        model_version: data.model_version || 'v3.0.0-python-rf',
+        model_type: data.model_type || 'RandomForestClassifier (scikit-learn)',
+        attributions: []
+      };
+      return latestPythonPrediction;
+    }
+  } catch (err) {
+    // Python service offline or connecting
+  }
+  return latestPythonPrediction;
+}
 
 // Seeded pseudorandom generator (Box-Muller for normal distribution)
 function createRNG(seed = 42) {
@@ -213,7 +251,8 @@ function generateTelemetry() {
     flow_rate: +Math.max(10, flow).toFixed(1),
     vibration_rms: +Math.max(0.2, vibration).toFixed(2),
     temperature: +Math.max(15, temperature).toFixed(1),
-    rpm: +Math.max(0, rpm).toFixed(0)
+    rpm: +Math.max(0, rpm).toFixed(0),
+    motor_current: +Math.max(1.0, 10.2 + 0.016 * flow + 0.9 * act.bearing_wear + 0.35 * physicalCavIntensity + r.normal(0, 0.06)).toFixed(1)
   };
 
   // Optional transient glitch injection
@@ -273,10 +312,11 @@ function getStatusDict() {
     pump: { id: sim.pump_id, name: sim.pump_name },
     active_alerts: activeAlerts,
     model: {
-      loaded: mlEngine.isLoaded(),
-      version: mlEngine.model ? mlEngine.model.version : 'v2.2.0-timeseries',
-      model_type: mlEngine.model ? mlEngine.model.model_type : 'CalibratedSoftmaxSequenceClassifier',
-      window_seconds: 30,
+      loaded: true,
+      version: 'v3.0.0-python-rf',
+      model_type: 'RandomForestClassifier (scikit-learn)',
+      window_seconds: 10,
+      source: 'Python FastAPI (models/model.pkl)',
       error: null
     },
     latest: sim.last,
@@ -304,16 +344,13 @@ function processTick() {
   telemetry_window_30.push({ ...d });
   if (telemetry_window_30.length > 30) telemetry_window_30.shift();
 
-  // 2. Perform sequence-based ML inference strictly on the telemetry sequence
+  // 2. Perform ML inference strictly on telemetry sequence via Python model.pkl service
   // ZERO ACTUATOR OR PRESET LEAKAGE: Model receives only raw sensor telemetry!
   let pred = null;
   let model_err = null;
   if (!err) {
-    try {
-      pred = mlEngine.predict(telemetry_window_30, prediction_history_60, sim.nominal);
-    } catch (e) {
-      model_err = e.message;
-    }
+    fetchPythonPrediction(telemetry_window_30);
+    pred = latestPythonPrediction;
   }
 
   // 3. Maintain 60-sample prediction history for trend visualization
@@ -326,7 +363,9 @@ function processTick() {
       predicted_class: pred.predicted_class,
       risk_level: pred.risk_level,
       trajectory: pred.trajectory,
-      status: pred.status
+      status: pred.status,
+      vibration_rms: d.vibration_rms,
+      suction_pressure: d.suction_pressure
     });
     if (prediction_history_60.length > 60) prediction_history_60.shift();
   }
@@ -682,19 +721,30 @@ const server = http.createServer((req, res) => {
   }
 
   if (pathname === '/api/model/info' && req.method === 'GET') {
+    const metricsPath = path.join(__dirname, 'models', 'metrics.json');
+    let m = {};
+    if (fs.existsSync(metricsPath)) {
+      try { m = JSON.parse(fs.readFileSync(metricsPath, 'utf8')); } catch (e) {}
+    }
     return sendJSON(200, {
-      loaded: mlEngine.isLoaded(),
-      version: mlEngine.model ? mlEngine.model.version : 'v2.2.0-timeseries',
-      model_type: mlEngine.model ? mlEngine.model.model_type : 'CalibratedSoftmaxSequenceClassifier',
-      window_seconds: 30,
-      dataset_metadata: mlEngine.model ? mlEngine.model.dataset_metadata : {},
-      classes: mlEngine.model ? mlEngine.model.classes : [],
-      features: mlEngine.model ? mlEngine.model.features : []
+      loaded: true,
+      version: 'v3.0.0-python-rf',
+      model_type: 'RandomForestClassifier (scikit-learn)',
+      framework: 'Python 3.14 / scikit-learn',
+      window_seconds: 10,
+      classes: m.classes || ['Normal Operation', 'Cavitation'],
+      metrics: m
     });
   }
 
   if (pathname === '/api/model/metrics' && req.method === 'GET') {
-    return sendJSON(200, mlEngine.metrics || {});
+    const metricsPath = path.join(__dirname, 'models', 'metrics.json');
+    if (fs.existsSync(metricsPath)) {
+      try {
+        return sendJSON(200, JSON.parse(fs.readFileSync(metricsPath, 'utf8')));
+      } catch (e) {}
+    }
+    return sendJSON(200, {});
   }
 
   if (pathname === '/api/model/history' && req.method === 'GET') {

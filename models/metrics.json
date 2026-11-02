@@ -1,104 +1,231 @@
 {
-  "version": "v2.2.0-timeseries",
-  "model_type": "Time-Series Calibrated Sequence Classifier",
-  "dataset_source": "Physically Plausible Synthetic Telemetry Dataset (Chronological Split)",
-  "trained_at": "2026-11-01T16:04:41.454Z",
-  "window_length_seconds": 30,
-  "accuracy": 0.9815,
-  "f1_macro": 0.9803,
-  "recall_cavitation": 0.9815,
-  "classes": [
-    "Normal Operation",
-    "Incipient Cavitation",
-    "Developing Cavitation",
-    "Severe Cavitation"
-  ],
+  "model_type": "RandomForestClassifier",
+  "accuracy": 0.9675,
+  "precision": 0.966,
+  "recall": 0.9564,
+  "f1_score": 0.9612,
+  "roc_auc": 0.9947,
   "confusion_matrix": [
     [
-      856,
-      5,
-      0,
-      0
+      678,
+      17
     ],
     [
-      23,
-      378,
-      4,
-      0
-    ],
-    [
-      0,
-      7,
-      398,
-      0
-    ],
-    [
-      0,
-      0,
-      0,
-      435
+      22,
+      483
     ]
   ],
-  "feature_importance": [
+  "roc_curve": [
+    {
+      "fpr": 0.0,
+      "tpr": 0.0
+    },
+    {
+      "fpr": 0.0,
+      "tpr": 0.6396
+    },
+    {
+      "fpr": 0.0,
+      "tpr": 0.6515
+    },
+    {
+      "fpr": 0.0,
+      "tpr": 0.6634
+    },
+    {
+      "fpr": 0.0,
+      "tpr": 0.6733
+    },
+    {
+      "fpr": 0.0,
+      "tpr": 0.697
+    },
+    {
+      "fpr": 0.0,
+      "tpr": 0.7307
+    },
+    {
+      "fpr": 0.0,
+      "tpr": 0.8772
+    },
+    {
+      "fpr": 0.0029,
+      "tpr": 0.895
+    },
+    {
+      "fpr": 0.0043,
+      "tpr": 0.9208
+    },
+    {
+      "fpr": 0.0086,
+      "tpr": 0.9248
+    },
+    {
+      "fpr": 0.0101,
+      "tpr": 0.9347
+    },
+    {
+      "fpr": 0.0144,
+      "tpr": 0.9386
+    },
+    {
+      "fpr": 0.0173,
+      "tpr": 0.9446
+    },
+    {
+      "fpr": 0.0245,
+      "tpr": 0.9564
+    },
+    {
+      "fpr": 0.0273,
+      "tpr": 0.9624
+    },
+    {
+      "fpr": 0.0302,
+      "tpr": 0.9644
+    },
+    {
+      "fpr": 0.0374,
+      "tpr": 0.9683
+    },
+    {
+      "fpr": 0.0446,
+      "tpr": 0.9703
+    },
+    {
+      "fpr": 0.046,
+      "tpr": 0.9743
+    },
+    {
+      "fpr": 0.0489,
+      "tpr": 0.9762
+    },
+    {
+      "fpr": 0.0532,
+      "tpr": 0.9802
+    },
+    {
+      "fpr": 0.1007,
+      "tpr": 0.9822
+    },
+    {
+      "fpr": 0.1065,
+      "tpr": 0.9861
+    },
+    {
+      "fpr": 0.1309,
+      "tpr": 0.9881
+    },
+    {
+      "fpr": 0.1439,
+      "tpr": 0.9921
+    },
+    {
+      "fpr": 0.2345,
+      "tpr": 0.9941
+    },
+    {
+      "fpr": 0.3755,
+      "tpr": 0.998
+    },
+    {
+      "fpr": 0.9022,
+      "tpr": 1.0
+    },
+    {
+      "fpr": 0.9568,
+      "tpr": 1.0
+    },
+    {
+      "fpr": 0.9712,
+      "tpr": 1.0
+    },
+    {
+      "fpr": 1.0,
+      "tpr": 1.0
+    }
+  ],
+  "feature_importances": [
+    {
+      "feature": "temperature_max",
+      "importance": 0.2276
+    },
+    {
+      "feature": "temperature_mean",
+      "importance": 0.1312
+    },
+    {
+      "feature": "discharge_pressure",
+      "importance": 0.1153
+    },
+    {
+      "feature": "suction_pressure_mean",
+      "importance": 0.1106
+    },
+    {
+      "feature": "suction_pressure",
+      "importance": 0.0873
+    },
+    {
+      "feature": "discharge_pressure_mean",
+      "importance": 0.0822
+    },
+    {
+      "feature": "temperature",
+      "importance": 0.0769
+    },
+    {
+      "feature": "flow_rate_mean",
+      "importance": 0.0381
+    },
+    {
+      "feature": "suction_pressure_std",
+      "importance": 0.024
+    },
+    {
+      "feature": "suction_pressure_max",
+      "importance": 0.0237
+    },
+    {
+      "feature": "flow_rate",
+      "importance": 0.0155
+    },
+    {
+      "feature": "vibration_rms_max",
+      "importance": 0.0128
+    },
+    {
+      "feature": "vibration_rms_mean",
+      "importance": 0.0123
+    },
+    {
+      "feature": "vib_to_flow",
+      "importance": 0.0061
+    },
     {
       "feature": "head_diff",
-      "importance": 0.126
-    },
-    {
-      "feature": "current_suction",
-      "importance": 0.1237
-    },
-    {
-      "feature": "current_rpm",
-      "importance": 0.1007
-    },
-    {
-      "feature": "current_flow",
-      "importance": 0.1006
-    },
-    {
-      "feature": "current_discharge",
-      "importance": 0.098
-    },
-    {
-      "feature": "vib_to_flow_ratio",
-      "importance": 0.091
-    },
-    {
-      "feature": "current_vibration",
-      "importance": 0.0831
-    },
-    {
-      "feature": "current_temperature",
-      "importance": 0.056
-    },
-    {
-      "feature": "slope_suction",
-      "importance": 0.0496
-    },
-    {
-      "feature": "slope_discharge",
-      "importance": 0.0373
-    },
-    {
-      "feature": "std_vibration",
-      "importance": 0.0339
-    },
-    {
-      "feature": "slope_flow",
-      "importance": 0.0295
-    },
-    {
-      "feature": "slope_vibration",
-      "importance": 0.0283
-    },
-    {
-      "feature": "slope_temperature",
-      "importance": 0.0266
-    },
-    {
-      "feature": "std_suction",
-      "importance": 0.0156
+      "importance": 0.0061
     }
-  ]
+  ],
+  "split_sizes": {
+    "train_runs": 80,
+    "test_runs": 20,
+    "train_samples": 4800,
+    "test_samples": 1200
+  },
+  "class_balance": {
+    "train": {
+      "0": 2894,
+      "1": 1906
+    },
+    "test": {
+      "0": 695,
+      "1": 505
+    }
+  },
+  "classes": [
+    "Normal Operation",
+    "Cavitation"
+  ],
+  "window_size_seconds": 10
 }

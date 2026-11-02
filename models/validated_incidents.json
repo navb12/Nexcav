@@ -1,0 +1,506 @@
+[
+  {
+    "alert_id": 4,
+    "timestamp": "2026-11-02T09:50:40.688Z",
+    "classification": "confirmed_cavitation",
+    "notes": "",
+    "operator": "SCADA Operator",
+    "alert_category": "CRITICAL: CAVITATION DETECTED",
+    "model_score": 0.999,
+    "predicted_class": "Severe Cavitation",
+    "telemetry_snapshot": [
+      {
+        "suction_pressure": 1.67,
+        "discharge_pressure": 6.55,
+        "flow_rate": 99.7,
+        "vibration_rms": 2.08,
+        "temperature": 61.5,
+        "rpm": 2942
+      },
+      {
+        "suction_pressure": 1.65,
+        "discharge_pressure": 6.49,
+        "flow_rate": 100.1,
+        "vibration_rms": 3.23,
+        "temperature": 70.8,
+        "rpm": 2934
+      },
+      {
+        "suction_pressure": 1.69,
+        "discharge_pressure": 6.54,
+        "flow_rate": 100.8,
+        "vibration_rms": 3.09,
+        "temperature": 71,
+        "rpm": 2942
+      },
+      {
+        "suction_pressure": 1.68,
+        "discharge_pressure": 6.54,
+        "flow_rate": 100.6,
+        "vibration_rms": 3.94,
+        "temperature": 78.6,
+        "rpm": 2935
+      },
+      {
+        "suction_pressure": 1.68,
+        "discharge_pressure": 6.56,
+        "flow_rate": 100.8,
+        "vibration_rms": 2.8,
+        "temperature": 69.7,
+        "rpm": 2942
+      },
+      {
+        "suction_pressure": 1.69,
+        "discharge_pressure": 6.5,
+        "flow_rate": 100,
+        "vibration_rms": 2.26,
+        "temperature": 60.5,
+        "rpm": 2945
+      },
+      {
+        "suction_pressure": 1.68,
+        "discharge_pressure": 6.53,
+        "flow_rate": 100.5,
+        "vibration_rms": 2.17,
+        "temperature": 60.3,
+        "rpm": 2951
+      },
+      {
+        "suction_pressure": 1.68,
+        "discharge_pressure": 6.52,
+        "flow_rate": 99.5,
+        "vibration_rms": 1.9,
+        "temperature": 52.4,
+        "rpm": 2949
+      },
+      {
+        "suction_pressure": 1.69,
+        "discharge_pressure": 6.5,
+        "flow_rate": 99.7,
+        "vibration_rms": 1.75,
+        "temperature": 52.4,
+        "rpm": 2953
+      },
+      {
+        "suction_pressure": 1.68,
+        "discharge_pressure": 6.48,
+        "flow_rate": 99.5,
+        "vibration_rms": 1.85,
+        "temperature": 52.3,
+        "rpm": 2947
+      },
+      {
+        "suction_pressure": 2.08,
+        "discharge_pressure": 6.54,
+        "flow_rate": 99.9,
+        "vibration_rms": 1.93,
+        "temperature": 52.5,
+        "rpm": 2953
+      },
+      {
+        "suction_pressure": 2.07,
+        "discharge_pressure": 6.45,
+        "flow_rate": 99.2,
+        "vibration_rms": 1.84,
+        "temperature": 52.3,
+        "rpm": 2952
+      },
+      {
+        "suction_pressure": 2.02,
+        "discharge_pressure": 6.49,
+        "flow_rate": 99.4,
+        "vibration_rms": 1.73,
+        "temperature": 52.5,
+        "rpm": 2951
+      },
+      {
+        "suction_pressure": 2.04,
+        "discharge_pressure": 6.52,
+        "flow_rate": 101,
+        "vibration_rms": 1.77,
+        "temperature": 52.8,
+        "rpm": 2953
+      },
+      {
+        "suction_pressure": 2.04,
+        "discharge_pressure": 6.53,
+        "flow_rate": 100,
+        "vibration_rms": 1.8,
+        "temperature": 52.4,
+        "rpm": 2948
+      },
+      {
+        "suction_pressure": 2.08,
+        "discharge_pressure": 6.5,
+        "flow_rate": 100.7,
+        "vibration_rms": 1.93,
+        "temperature": 52.5,
+        "rpm": 2952
+      },
+      {
+        "suction_pressure": 2.06,
+        "discharge_pressure": 6.5,
+        "flow_rate": 99.8,
+        "vibration_rms": 1.85,
+        "temperature": 52.5,
+        "rpm": 2951
+      },
+      {
+        "suction_pressure": 2.05,
+        "discharge_pressure": 6.53,
+        "flow_rate": 100.2,
+        "vibration_rms": 1.91,
+        "temperature": 52.7,
+        "rpm": 2951
+      },
+      {
+        "suction_pressure": 2.03,
+        "discharge_pressure": 6.5,
+        "flow_rate": 99.3,
+        "vibration_rms": 1.87,
+        "temperature": 52.4,
+        "rpm": 2952
+      },
+      {
+        "suction_pressure": 2.05,
+        "discharge_pressure": 6.46,
+        "flow_rate": 99.3,
+        "vibration_rms": 1.78,
+        "temperature": 52.3,
+        "rpm": 2952
+      },
+      {
+        "suction_pressure": 2.07,
+        "discharge_pressure": 6.53,
+        "flow_rate": 100.1,
+        "vibration_rms": 1.82,
+        "temperature": 52.7,
+        "rpm": 2947
+      },
+      {
+        "suction_pressure": 2.06,
+        "discharge_pressure": 6.51,
+        "flow_rate": 100.5,
+        "vibration_rms": 1.93,
+        "temperature": 52.3,
+        "rpm": 2947
+      },
+      {
+        "suction_pressure": 2.09,
+        "discharge_pressure": 6.5,
+        "flow_rate": 100.8,
+        "vibration_rms": 1.8,
+        "temperature": 52.8,
+        "rpm": 2949
+      },
+      {
+        "suction_pressure": 2.04,
+        "discharge_pressure": 6.53,
+        "flow_rate": 99.8,
+        "vibration_rms": 1.9,
+        "temperature": 52.5,
+        "rpm": 2952
+      },
+      {
+        "suction_pressure": 2.01,
+        "discharge_pressure": 6.52,
+        "flow_rate": 100.3,
+        "vibration_rms": 1.8,
+        "temperature": 52.7,
+        "rpm": 2954
+      },
+      {
+        "suction_pressure": 2.06,
+        "discharge_pressure": 6.49,
+        "flow_rate": 99.1,
+        "vibration_rms": 1.89,
+        "temperature": 52.6,
+        "rpm": 2953
+      },
+      {
+        "suction_pressure": 2.02,
+        "discharge_pressure": 6.54,
+        "flow_rate": 101,
+        "vibration_rms": 1.95,
+        "temperature": 52.3,
+        "rpm": 2949
+      },
+      {
+        "suction_pressure": 2.06,
+        "discharge_pressure": 6.52,
+        "flow_rate": 100.4,
+        "vibration_rms": 1.82,
+        "temperature": 52.7,
+        "rpm": 2945
+      },
+      {
+        "suction_pressure": 2.04,
+        "discharge_pressure": 6.53,
+        "flow_rate": 99.5,
+        "vibration_rms": 1.87,
+        "temperature": 52.3,
+        "rpm": 2955
+      },
+      {
+        "suction_pressure": 2.07,
+        "discharge_pressure": 6.55,
+        "flow_rate": 100.8,
+        "vibration_rms": 1.85,
+        "temperature": 52.4,
+        "rpm": 2945
+      }
+    ]
+  },
+  {
+    "alert_id": 4,
+    "timestamp": "2026-11-02T09:50:39.641Z",
+    "classification": "confirmed_cavitation",
+    "notes": "",
+    "operator": "SCADA Operator",
+    "alert_category": "CRITICAL: CAVITATION DETECTED",
+    "model_score": 0.999,
+    "predicted_class": "Severe Cavitation",
+    "telemetry_snapshot": [
+      {
+        "suction_pressure": 1.65,
+        "discharge_pressure": 6.58,
+        "flow_rate": 100.9,
+        "vibration_rms": 1.84,
+        "temperature": 52.6,
+        "rpm": 2954
+      },
+      {
+        "suction_pressure": 1.67,
+        "discharge_pressure": 6.55,
+        "flow_rate": 99.7,
+        "vibration_rms": 2.08,
+        "temperature": 61.5,
+        "rpm": 2942
+      },
+      {
+        "suction_pressure": 1.65,
+        "discharge_pressure": 6.49,
+        "flow_rate": 100.1,
+        "vibration_rms": 3.23,
+        "temperature": 70.8,
+        "rpm": 2934
+      },
+      {
+        "suction_pressure": 1.69,
+        "discharge_pressure": 6.54,
+        "flow_rate": 100.8,
+        "vibration_rms": 3.09,
+        "temperature": 71,
+        "rpm": 2942
+      },
+      {
+        "suction_pressure": 1.68,
+        "discharge_pressure": 6.54,
+        "flow_rate": 100.6,
+        "vibration_rms": 3.94,
+        "temperature": 78.6,
+        "rpm": 2935
+      },
+      {
+        "suction_pressure": 1.68,
+        "discharge_pressure": 6.56,
+        "flow_rate": 100.8,
+        "vibration_rms": 2.8,
+        "temperature": 69.7,
+        "rpm": 2942
+      },
+      {
+        "suction_pressure": 1.69,
+        "discharge_pressure": 6.5,
+        "flow_rate": 100,
+        "vibration_rms": 2.26,
+        "temperature": 60.5,
+        "rpm": 2945
+      },
+      {
+        "suction_pressure": 1.68,
+        "discharge_pressure": 6.53,
+        "flow_rate": 100.5,
+        "vibration_rms": 2.17,
+        "temperature": 60.3,
+        "rpm": 2951
+      },
+      {
+        "suction_pressure": 1.68,
+        "discharge_pressure": 6.52,
+        "flow_rate": 99.5,
+        "vibration_rms": 1.9,
+        "temperature": 52.4,
+        "rpm": 2949
+      },
+      {
+        "suction_pressure": 1.69,
+        "discharge_pressure": 6.5,
+        "flow_rate": 99.7,
+        "vibration_rms": 1.75,
+        "temperature": 52.4,
+        "rpm": 2953
+      },
+      {
+        "suction_pressure": 1.68,
+        "discharge_pressure": 6.48,
+        "flow_rate": 99.5,
+        "vibration_rms": 1.85,
+        "temperature": 52.3,
+        "rpm": 2947
+      },
+      {
+        "suction_pressure": 2.08,
+        "discharge_pressure": 6.54,
+        "flow_rate": 99.9,
+        "vibration_rms": 1.93,
+        "temperature": 52.5,
+        "rpm": 2953
+      },
+      {
+        "suction_pressure": 2.07,
+        "discharge_pressure": 6.45,
+        "flow_rate": 99.2,
+        "vibration_rms": 1.84,
+        "temperature": 52.3,
+        "rpm": 2952
+      },
+      {
+        "suction_pressure": 2.02,
+        "discharge_pressure": 6.49,
+        "flow_rate": 99.4,
+        "vibration_rms": 1.73,
+        "temperature": 52.5,
+        "rpm": 2951
+      },
+      {
+        "suction_pressure": 2.04,
+        "discharge_pressure": 6.52,
+        "flow_rate": 101,
+        "vibration_rms": 1.77,
+        "temperature": 52.8,
+        "rpm": 2953
+      },
+      {
+        "suction_pressure": 2.04,
+        "discharge_pressure": 6.53,
+        "flow_rate": 100,
+        "vibration_rms": 1.8,
+        "temperature": 52.4,
+        "rpm": 2948
+      },
+      {
+        "suction_pressure": 2.08,
+        "discharge_pressure": 6.5,
+        "flow_rate": 100.7,
+        "vibration_rms": 1.93,
+        "temperature": 52.5,
+        "rpm": 2952
+      },
+      {
+        "suction_pressure": 2.06,
+        "discharge_pressure": 6.5,
+        "flow_rate": 99.8,
+        "vibration_rms": 1.85,
+        "temperature": 52.5,
+        "rpm": 2951
+      },
+      {
+        "suction_pressure": 2.05,
+        "discharge_pressure": 6.53,
+        "flow_rate": 100.2,
+        "vibration_rms": 1.91,
+        "temperature": 52.7,
+        "rpm": 2951
+      },
+      {
+        "suction_pressure": 2.03,
+        "discharge_pressure": 6.5,
+        "flow_rate": 99.3,
+        "vibration_rms": 1.87,
+        "temperature": 52.4,
+        "rpm": 2952
+      },
+      {
+        "suction_pressure": 2.05,
+        "discharge_pressure": 6.46,
+        "flow_rate": 99.3,
+        "vibration_rms": 1.78,
+        "temperature": 52.3,
+        "rpm": 2952
+      },
+      {
+        "suction_pressure": 2.07,
+        "discharge_pressure": 6.53,
+        "flow_rate": 100.1,
+        "vibration_rms": 1.82,
+        "temperature": 52.7,
+        "rpm": 2947
+      },
+      {
+        "suction_pressure": 2.06,
+        "discharge_pressure": 6.51,
+        "flow_rate": 100.5,
+        "vibration_rms": 1.93,
+        "temperature": 52.3,
+        "rpm": 2947
+      },
+      {
+        "suction_pressure": 2.09,
+        "discharge_pressure": 6.5,
+        "flow_rate": 100.8,
+        "vibration_rms": 1.8,
+        "temperature": 52.8,
+        "rpm": 2949
+      },
+      {
+        "suction_pressure": 2.04,
+        "discharge_pressure": 6.53,
+        "flow_rate": 99.8,
+        "vibration_rms": 1.9,
+        "temperature": 52.5,
+        "rpm": 2952
+      },
+      {
+        "suction_pressure": 2.01,
+        "discharge_pressure": 6.52,
+        "flow_rate": 100.3,
+        "vibration_rms": 1.8,
+        "temperature": 52.7,
+        "rpm": 2954
+      },
+      {
+        "suction_pressure": 2.06,
+        "discharge_pressure": 6.49,
+        "flow_rate": 99.1,
+        "vibration_rms": 1.89,
+        "temperature": 52.6,
+        "rpm": 2953
+      },
+      {
+        "suction_pressure": 2.02,
+        "discharge_pressure": 6.54,
+        "flow_rate": 101,
+        "vibration_rms": 1.95,
+        "temperature": 52.3,
+        "rpm": 2949
+      },
+      {
+        "suction_pressure": 2.06,
+        "discharge_pressure": 6.52,
+        "flow_rate": 100.4,
+        "vibration_rms": 1.82,
+        "temperature": 52.7,
+        "rpm": 2945
+      },
+      {
+        "suction_pressure": 2.04,
+        "discharge_pressure": 6.53,
+        "flow_rate": 99.5,
+        "vibration_rms": 1.87,
+        "temperature": 52.3,
+        "rpm": 2955
+      }
+    ]
+  }
+]

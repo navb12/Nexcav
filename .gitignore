@@ -4,3 +4,4 @@ frontend/dist/
 .gemini/
 __pycache__/
 *.pyc
+

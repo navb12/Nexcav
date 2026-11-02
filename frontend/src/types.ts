@@ -5,6 +5,7 @@ export interface SensorReadings {
   vibration_rms: number | null;
   temperature: number | null;
   rpm: number | null;
+  motor_current?: number | null;
 }
 
 export interface SequenceFeatures {
@@ -48,6 +49,8 @@ export interface PredictionHistoryItem {
   risk_level: number;
   trajectory?: string;
   status?: string;
+  vibration_rms?: number;
+  suction_pressure?: number;
 }
 
 export interface ThresholdBreach {

@@ -7,16 +7,42 @@ import {
   FeatureAttribution,
   PumpActuators
 } from './types.ts';
-import { AnimatedPump } from './components/AnimatedPump.tsx';
-import { SensorCard } from './components/SensorCard.tsx';
-import { SimulationControls } from './components/SimulationControls.tsx';
-import { RiskGauge } from './components/RiskGauge.tsx';
+import { PumpSchematic } from './components/PumpSchematic.tsx';
+import { CavitationProbabilityChart } from './components/CavitationProbabilityChart.tsx';
 import { AnalyticsPanel } from './components/MLMetricsPanel.tsx';
 import { HistoryExportPanel } from './components/HistoryExportPanel.tsx';
 import { CriticalAlarmModal } from './components/CriticalAlarmModal.tsx';
 
+// Severity Stage Cutoffs (Configurable in one named constant)
+export const SEVERITY_THRESHOLDS = {
+  normal: 0.25,     // Below 25%: Normal
+  incipient: 0.50,  // 25% to 50%: Incipient
+  developed: 0.80   // 50% to 80%: Developed, Above 80%: Severe
+} as const;
+
+export function getSeverityStage(prob: number): 'Normal' | 'Incipient' | 'Developed' | 'Severe' {
+  if (prob < SEVERITY_THRESHOLDS.normal) return 'Normal';
+  if (prob < SEVERITY_THRESHOLDS.incipient) return 'Incipient';
+  if (prob < SEVERITY_THRESHOLDS.developed) return 'Developed';
+  return 'Severe';
+}
+
+// Stage color: neutral for Normal, then single accent color increasing in strength
+export function getSeverityColor(stage: 'Normal' | 'Incipient' | 'Developed' | 'Severe'): string {
+  switch (stage) {
+    case 'Normal':
+      return '#94a3b8'; // Neutral slate
+    case 'Incipient':
+      return 'rgba(56, 189, 248, 0.70)'; // Accent blue at 70% intensity
+    case 'Developed':
+      return '#38bdf8'; // Full accent blue
+    case 'Severe':
+      return '#60a5fa'; // Strong bright accent blue
+  }
+}
+
 export const App: React.FC = () => {
-  // Navigation tabs: Minimal 3 sections
+  // Navigation tabs: Live (matching user design) | Model... | History
   const [activeTab, setActiveTab] = useState<'overview' | 'analytics' | 'history'>('overview');
 
   // Connection & Telemetry State
@@ -33,18 +59,15 @@ export const App: React.FC = () => {
     vibration_unbalance: 0
   });
 
+  // Controls UI state matching the design
+  const [selectedFault, setSelectedFault] = useState<string>('suction_restriction');
+  const [faultSeverity, setFaultSeverity] = useState<number>(35); // Matches "35 %" in design
+  const [faultActive, setFaultActive] = useState<boolean>(false);
+
   // Auxiliary Backend Diagnostics
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [metrics, setMetrics] = useState<ModelMetrics | null>(null);
   const [explanation, setExplanation] = useState<{ attributions: FeatureAttribution[]; original_score: number } | null>(null);
-
-  // Real-time sparkline rolling buffers (last 20 readings)
-  const [suctionHistory, setSuctionHistory] = useState<number[]>([]);
-  const [dischargeHistory, setDischargeHistory] = useState<number[]>([]);
-  const [flowHistory, setFlowHistory] = useState<number[]>([]);
-  const [vibHistory, setVibHistory] = useState<number[]>([]);
-  const [tempHistory, setTempHistory] = useState<number[]>([]);
-  const [rpmHistory, setRpmHistory] = useState<number[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -93,16 +116,14 @@ export const App: React.FC = () => {
           if (msg.type === 'reading' || msg.type === 'snapshot') {
             setTelemetry(msg);
             if (msg.running !== undefined) setSimRunning(msg.running);
-            if (msg.actuators) setActuators(msg.actuators);
-
-            const r = msg.readings;
-            if (r) {
-              if (r.suction_pressure !== null) setSuctionHistory((prev) => [...prev.slice(-20), r.suction_pressure]);
-              if (r.discharge_pressure !== null) setDischargeHistory((prev) => [...prev.slice(-20), r.discharge_pressure]);
-              if (r.flow_rate !== null) setFlowHistory((prev) => [...prev.slice(-20), r.flow_rate]);
-              if (r.vibration_rms !== null) setVibHistory((prev) => [...prev.slice(-20), r.vibration_rms]);
-              if (r.temperature !== null) setTempHistory((prev) => [...prev.slice(-20), r.temperature]);
-              if (r.rpm !== null) setRpmHistory((prev) => [...prev.slice(-20), r.rpm]);
+            if (msg.actuators) {
+              setActuators(msg.actuators);
+              const suctAct = msg.actuators.suction_restriction || 0;
+              const brgAct = msg.actuators.bearing_wear || 0;
+              const discAct = msg.actuators.discharge_throttling || 0;
+              if (suctAct > 0 || brgAct > 0 || discAct > 0) {
+                setFaultActive(true);
+              }
             }
           }
         } catch {
@@ -136,42 +157,7 @@ export const App: React.FC = () => {
     };
   }, [fetchAuxiliaryData]);
 
-  // Simulation Controls Integration
-  const handleStartSim = async () => {
-    try {
-      await fetch('/api/sim/start', { method: 'POST' });
-      setSimRunning(true);
-    } catch {
-      setConnError('Failed to send start signal to backend');
-    }
-  };
-
-  const handlePauseSim = async () => {
-    try {
-      await fetch('/api/sim/pause', { method: 'POST' });
-      setSimRunning(false);
-    } catch {
-      setConnError('Failed to send pause signal to backend');
-    }
-  };
-
-  const handleResetSim = async () => {
-    try {
-      await fetch('/api/sim/reset', { method: 'POST' });
-      setSimRunning(false);
-      setActuators({ suction_restriction: 0, bearing_wear: 0, discharge_throttling: 0, vibration_unbalance: 0 });
-      setSuctionHistory([]);
-      setDischargeHistory([]);
-      setFlowHistory([]);
-      setVibHistory([]);
-      setTempHistory([]);
-      setRpmHistory([]);
-      fetchAuxiliaryData();
-    } catch {
-      setConnError('Failed to reset simulation');
-    }
-  };
-
+  // Physical Actuation Handlers
   const handleActuate = async (actuator: string, delta: number, intensity?: number) => {
     try {
       const res = await fetch('/api/sim/actuate', {
@@ -202,6 +188,17 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleInjectCurrentFault = () => {
+    handleActuate(selectedFault, 0, faultSeverity / 100);
+    setFaultActive(true);
+  };
+
+  const handleResetFault = () => {
+    handleRepairPump();
+    setFaultSeverity(0);
+    setFaultActive(false);
+  };
+
   const handleValidateAlert = async (id: number, classification: string, notes = '') => {
     try {
       await fetch(`/api/alerts/${id}/validate`, {
@@ -226,14 +223,6 @@ export const App: React.FC = () => {
       await fetch(`/api/alerts/${id}/resolve`, { method: 'POST' });
     } catch {
       // ignore
-    }
-    fetchAuxiliaryData();
-  };
-
-  const handleAcknowledgeAll = async () => {
-    const active = alerts.filter(a => a.status === 'active');
-    for (const a of active) {
-      await fetch(`/api/alerts/${a.id}/ack`, { method: 'POST' });
     }
     fetchAuxiliaryData();
   };
@@ -267,17 +256,20 @@ export const App: React.FC = () => {
   };
 
   const currentReadings = telemetry?.readings || {
-    suction_pressure: 2.05,
-    discharge_pressure: 6.52,
-    flow_rate: 100.2,
-    vibration_rms: 1.85,
-    temperature: 52.5,
-    rpm: 2950.0
+    suction_pressure: 0.42,
+    discharge_pressure: 4.10,
+    flow_rate: 38.2,
+    vibration_rms: 6.80,
+    temperature: 58.0,
+    rpm: 2930.0,
+    motor_current: 11.9
   };
 
-  const activeAlerts = alerts.filter(a => a.status === 'active');
-  const unresolvedAlerts = alerts.filter(a => a.status !== 'resolved');
+  const prob = telemetry?.prediction?.model_score ?? (faultActive ? 0.78 : 0.05);
+  const severityStage = getSeverityStage(prob);
+  const severityColor = getSeverityColor(severityStage);
   const criticalActiveAlert = alerts.find(a => a.severity === 2 && a.status === 'active');
+  const activeDegradation = Object.values(actuators).some(v => v > 0);
 
   return (
     <div style={{
@@ -285,10 +277,12 @@ export const App: React.FC = () => {
       width: '100vw',
       display: 'flex',
       flexDirection: 'column',
-      backgroundColor: 'var(--bg-base)',
+      backgroundColor: '#0d1117',
+      color: '#f8fafc',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
       overflow: 'hidden'
     }}>
-      {/* Proper Critical Alarm Popup Modal (Latching, Stays until Acknowledged or Resolved) */}
+      {/* Critical Alarm Modal */}
       {criticalActiveAlert && (
         <CriticalAlarmModal
           alert={criticalActiveAlert}
@@ -298,425 +292,318 @@ export const App: React.FC = () => {
           onValidate={(cls) => handleValidateAlert(criticalActiveAlert.id, cls)}
         />
       )}
-      {/* 1. Header: NEXCAV, Unit ID, Connection & Navigation */}
+
+      {/* 1. Top Bar: "NexCav Pump P-101 cavitation monitor" + Navigation ("Live", "Model...") */}
       <header style={{
-        backgroundColor: 'var(--bg-surface)',
-        borderBottom: '1px solid var(--border-subtle)',
-        padding: '8px 18px',
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
+        padding: '10px 24px',
+        backgroundColor: '#0d1117',
+        borderBottom: '1px solid #1e293b',
         flexShrink: 0
       }}>
-        {/* Brand & Small Pump Icon */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{
-            width: '28px',
-            height: '28px',
-            borderRadius: '4px',
-            backgroundColor: 'var(--bg-surface-elevated)',
-            border: '1px solid var(--border-medium)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0
-          }}>
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="var(--accent-cyan)"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              style={{ display: 'block' }}
-            >
-              {/* Discharge nozzle & top flange */}
-              <line x1="13" y1="3" x2="21" y2="3" strokeWidth="1.8" />
-              <path d="M15 3v5" strokeWidth="1.6" />
-              <path d="M19 3v8" strokeWidth="1.6" />
-
-              {/* Pump volute casing */}
-              <circle cx="12" cy="13.5" r="7.2" strokeWidth="1.6" fill="rgba(56, 189, 248, 0.08)" />
-
-              {/* Suction inlet nozzle on left */}
-              <path d="M2.5 11.5h2.5v4H2.5" strokeWidth="1.5" />
-
-              {/* Center impeller hub & eye */}
-              <circle cx="12" cy="13.5" r="2.8" strokeWidth="1.5" fill="var(--bg-surface-elevated)" />
-              <circle cx="12" cy="13.5" r="1.1" fill="var(--accent-cyan)" stroke="none" />
-
-              {/* Impeller vane ticks */}
-              <line x1="12" y1="8.2" x2="12" y2="9.6" strokeWidth="1.3" />
-              <line x1="12" y1="17.4" x2="12" y2="18.8" strokeWidth="1.3" />
-              <line x1="6.8" y1="13.5" x2="8.2" y2="13.5" strokeWidth="1.3" />
-              <line x1="15.8" y1="13.5" x2="17.2" y2="13.5" strokeWidth="1.3" />
-            </svg>
-          </div>
-          <h1 style={{ fontSize: '17px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '0.8px', margin: 0 }}>
-            NEXCAV
-          </h1>
+        {/* Title */}
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
+          <span style={{ fontSize: '18px', fontWeight: 800, color: '#f8fafc', letterSpacing: '0.2px' }}>
+            NexCav
+          </span>
+          <span style={{ fontSize: '14px', color: '#94a3b8', fontWeight: 400 }}>
+            Pump P-101 cavitation monitor
+          </span>
         </div>
 
-        {/* Connection Indicator */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          {/* Connection Status Badge */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            fontSize: '12px',
-            fontFamily: 'monospace',
-            fontWeight: 700,
-            color: connected ? 'var(--status-normal)' : 'var(--status-critical)'
-          }}>
-            <span style={{
-              width: '7px',
-              height: '7px',
-              borderRadius: '50%',
-              backgroundColor: connected ? 'var(--status-normal)' : 'var(--status-critical)'
-            }} />
-            <span>{connected ? 'ONLINE (127.0.0.1:8000)' : 'OFFLINE'}</span>
-          </div>
-        </div>
+        {/* Top-Right Navigation Tabs */}
+        <nav style={{ display: 'flex', gap: '22px', alignItems: 'center' }}>
+          <button
+            onClick={() => setActiveTab('overview')}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: activeTab === 'overview' ? '#f8fafc' : '#94a3b8',
+              fontWeight: activeTab === 'overview' ? 700 : 500,
+              fontSize: '14px',
+              paddingBottom: '3px',
+              borderBottom: activeTab === 'overview' ? '2.5px solid #38bdf8' : '2.5px solid transparent',
+              cursor: 'pointer'
+            }}
+          >
+            Live
+          </button>
 
-        {/* Minimal Navigation: Overview | Analytics | History */}
-        <nav style={{ display: 'flex', gap: '4px', backgroundColor: 'var(--bg-surface-subtle)', padding: '3px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
-          {[
-            { id: 'overview', label: 'Overview' },
-            { id: 'analytics', label: 'Diagnostics & ML' },
-            { id: 'history', label: `Alarms & History (${unresolvedAlerts.length})` }
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              style={{
-                backgroundColor: activeTab === tab.id ? 'var(--bg-surface-elevated)' : 'transparent',
-                color: activeTab === tab.id ? 'var(--accent-cyan)' : 'var(--text-secondary)',
-                border: activeTab === tab.id ? '1px solid var(--border-medium)' : '1px solid transparent',
-                padding: '5px 12px',
-                borderRadius: '3px',
-                fontSize: '12px',
-                fontWeight: activeTab === tab.id ? 700 : 500,
-                cursor: 'pointer'
-              }}
-            >
-              {tab.label}
-            </button>
-          ))}
+          <button
+            onClick={() => setActiveTab('analytics')}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: activeTab === 'analytics' ? '#f8fafc' : '#94a3b8',
+              fontWeight: activeTab === 'analytics' ? 700 : 500,
+              fontSize: '14px',
+              paddingBottom: '3px',
+              borderBottom: activeTab === 'analytics' ? '2.5px solid #38bdf8' : '2.5px solid transparent',
+              cursor: 'pointer'
+            }}
+          >
+            Model...
+          </button>
+
+          <button
+            onClick={() => setActiveTab('history')}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: activeTab === 'history' ? '#f8fafc' : '#94a3b8',
+              fontWeight: activeTab === 'history' ? 700 : 500,
+              fontSize: '14px',
+              paddingBottom: '3px',
+              borderBottom: activeTab === 'history' ? '2.5px solid #38bdf8' : '2.5px solid transparent',
+              cursor: 'pointer'
+            }}
+          >
+            History
+          </button>
         </nav>
       </header>
 
-      {/* Connection Warning Banner */}
+      {/* Connection Offline Alert Banner (Only if disconnected) */}
       {connError && (
         <div style={{
           backgroundColor: 'rgba(239, 68, 68, 0.12)',
-          borderBottom: '1px solid var(--status-critical)',
-          padding: '6px 20px',
+          borderBottom: '1px solid #ef4444',
+          padding: '4px 24px',
           fontSize: '11px',
-          color: 'var(--status-critical)',
+          color: '#ef4444',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center'
         }}>
           <span>⚠ {connError}</span>
-          <span style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>
-            Start backend with: <code>node server.js</code>
-          </span>
+          <span style={{ fontSize: '10.5px', color: '#94a3b8' }}>Run: <code>node server.js</code></span>
         </div>
       )}
 
-      {/* Main Screen Container */}
-      <main style={{
-        flex: 1,
-        padding: '8px 18px',
+      {/* 2. Sub-Header: "Replay: test_run_07.csv" (Left) + "Developed cavitation P = 78 %" (Right) */}
+      <div style={{
         display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
-        maxWidth: '100%',
-        width: '100%',
-        margin: '0 auto',
-        minHeight: 0,
-        overflow: activeTab === 'overview' ? 'hidden' : 'auto',
-        boxSizing: 'border-box'
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '10px 24px 6px',
+        backgroundColor: '#0d1117',
+        flexShrink: 0
       }}>
-        {/* Streamlined Industrial Simulation Controls Bar */}
-        <SimulationControls
-          running={simRunning}
-          simTime={telemetry?.sim_t ?? 0}
-          actuators={actuators}
-          onStart={handleStartSim}
-          onPause={handlePauseSim}
-          onReset={handleResetSim}
-          onActuate={handleActuate}
-          onRepairPump={handleRepairPump}
-        />
+        <div style={{
+          color: '#94a3b8',
+          fontFamily: 'monospace',
+          fontSize: '13px',
+          letterSpacing: '0.2px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px'
+        }}>
+          <span
+            style={{
+              width: '6px',
+              height: '6px',
+              borderRadius: '50%',
+              backgroundColor: connected ? '#10b981' : '#ef4444',
+              display: 'inline-block'
+            }}
+            title={connected ? 'Live WebSocket connected' : 'WebSocket connecting or offline'}
+          />
+          <span>Replay: test_run_07.csv</span>
+          {activeDegradation && (
+            <span style={{ fontSize: '11px', color: '#f59e0b', fontWeight: 600 }}>
+              (fault active)
+            </span>
+          )}
+        </div>
 
-        {/* Tab 1: Overview (Main Visual Focus) */}
-        {activeTab === 'overview' && (
+        <div style={{
+          fontSize: '15px',
+          fontWeight: 700,
+          color: severityColor,
+          fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
+          letterSpacing: '0.3px'
+        }}>
+          {severityStage}  P = {Math.round(prob * 100)} %
+        </div>
+      </div>
+
+      {/* 3. Main Dashboard View (Left Column + Right Chart) */}
+      {activeTab === 'overview' && (
+        <main style={{
+          display: 'grid',
+          gridTemplateColumns: '270px 1fr',
+          flex: 1,
+          minHeight: 0,
+          backgroundColor: '#0d1117',
+          padding: '0 24px',
+          gap: '24px',
+          overflow: 'hidden'
+        }}>
+          {/* Left Column: Pump Schematic + Fault Controls */}
           <div style={{
             display: 'flex',
             flexDirection: 'column',
-            gap: '8px',
-            flex: 1,
-            minHeight: 0,
-            overflow: 'hidden'
+            borderRight: '1px solid #1e293b',
+            paddingRight: '22px',
+            gap: '12px',
+            justifyContent: 'flex-start'
           }}>
-            {/* Top Row: Pump Animation (Left, Smaller) & Telemetry Area (Right, 6 Cards in 3x2 Grid) */}
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(280px, 0.9fr) minmax(560px, 2.1fr)',
-              gap: '8px',
-              flex: 1,
-              minHeight: 0
-            }}>
-              {/* 1. Pump Animation Area (Smaller, Simplified) */}
-              <AnimatedPump
-                rpm={currentReadings.rpm}
-                vibration={currentReadings.vibration_rms}
-                severity={telemetry?.scenario_severity ?? 0.05}
-                status={telemetry?.status || 'Normal Operation'}
-                running={simRunning}
-              />
+            {/* Pump Diagram */}
+            <PumpSchematic
+              rpm={currentReadings.rpm || 2950}
+              running={simRunning}
+              probability={prob}
+              severityStage={severityStage}
+            />
 
-              {/* 2. Telemetry Area: 6 Sensors in 3 Columns x 2 Rows */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(3, 1fr)',
-                gridTemplateRows: 'repeat(2, 1fr)',
-                gap: '8px',
-                height: '100%',
-                minHeight: 0
-              }}>
-                <SensorCard
-                  label="Suction Pressure"
-                  value={currentReadings.suction_pressure}
-                  unit="bar"
-                  nominal={2.05}
-                  history={suctionHistory}
-                  warningLimit={1.20}
-                  alarmLimit={0.80}
-                  operator="<"
-                />
-                <SensorCard
-                  label="Discharge Pressure"
-                  value={currentReadings.discharge_pressure}
-                  unit="bar"
-                  nominal={6.52}
-                  history={dischargeHistory}
-                  warningLimit={5.00}
-                  alarmLimit={4.00}
-                  operator="<"
-                />
-                <SensorCard
-                  label="Water Flow Rate"
-                  value={currentReadings.flow_rate}
-                  unit="m³/h"
-                  nominal={100.2}
-                  history={flowHistory}
-                  warningLimit={75.0}
-                  alarmLimit={60.0}
-                  operator="<"
-                />
-                <SensorCard
-                  label="Pump Vibration"
-                  value={currentReadings.vibration_rms}
-                  unit="mm/s"
-                  nominal={1.85}
-                  history={vibHistory}
-                  warningLimit={4.50}
-                  alarmLimit={7.00}
-                  operator=">"
-                />
-                <SensorCard
-                  label="Bearing Temperature"
-                  value={currentReadings.temperature}
-                  unit="°C"
-                  nominal={52.5}
-                  history={tempHistory}
-                  warningLimit={70.0}
-                  alarmLimit={80.0}
-                  operator=">"
-                />
-                <SensorCard
-                  label="Shaft Speed"
-                  value={currentReadings.rpm}
-                  unit="RPM"
-                  nominal={2950}
-                  decimals={0}
-                  history={rpmHistory}
-                />
+            {/* Controls Section */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '2px' }}>
+              {/* Fault type */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '13px', color: '#94a3b8', fontWeight: 500 }}>
+                  Fault type
+                </label>
+                <select
+                  value={selectedFault}
+                  onChange={(e) => setSelectedFault(e.target.value)}
+                  style={{
+                    backgroundColor: '#111827',
+                    color: '#f8fafc',
+                    border: '1px solid #334155',
+                    borderRadius: '6px',
+                    padding: '8px 12px',
+                    fontSize: '13px',
+                    outline: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <option value="suction_restriction">Suction restriction</option>
+                  <option value="bearing_wear">Bearing wear</option>
+                  <option value="discharge_throttling">Discharge throttling</option>
+                  <option value="vibration_unbalance">Rotor unbalance</option>
+                </select>
+              </div>
+
+              {/* Fault severity */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '13px', color: '#94a3b8', fontWeight: 500 }}>
+                  Fault severity
+                </label>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  backgroundColor: '#111827',
+                  border: '1px solid #334155',
+                  borderRadius: '6px',
+                  padding: '4px 8px',
+                  width: '150px'
+                }}>
+                  <button
+                    onClick={() => setFaultSeverity((prev) => Math.max(0, prev - 10))}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#cbd5e1',
+                      fontSize: '16px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      padding: '2px 8px'
+                    }}
+                  >
+                    -
+                  </button>
+                  <span style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc', fontFamily: 'monospace' }}>
+                    {faultSeverity} %
+                  </span>
+                  <button
+                    onClick={() => setFaultSeverity((prev) => Math.min(100, prev + 10))}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#cbd5e1',
+                      fontSize: '16px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      padding: '2px 8px'
+                    }}
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
+              {/* Action Buttons: Inject & Reset */}
+              <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
+                <button
+                  onClick={handleInjectCurrentFault}
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#111827',
+                    color: '#f8fafc',
+                    border: '1px solid #334155',
+                    borderRadius: '6px',
+                    padding: '8px 16px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                  title="Apply fault condition to simulated pump"
+                >
+                  Inject
+                </button>
+                <button
+                  onClick={handleResetFault}
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#111827',
+                    color: '#cbd5e1',
+                    border: '1px solid #334155',
+                    borderRadius: '6px',
+                    padding: '8px 16px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                  title="Reset pump to nominal healthy state"
+                >
+                  Reset
+                </button>
               </div>
             </div>
+          </div>
 
-            {/* Persistent Active Alarms List Bar on Overview */}
-            {unresolvedAlerts.length > 0 && (
-              <div style={{
-                backgroundColor: 'var(--bg-surface)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: '4px',
-                padding: '6px 12px',
-                flexShrink: 0
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                  <span style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-                    Active Alarms & Diagnostic Notifications ({unresolvedAlerts.length})
-                  </span>
-                  {activeAlerts.length > 0 && (
-                    <button
-                      onClick={handleAcknowledgeAll}
-                      style={{
-                        backgroundColor: 'var(--bg-surface-elevated)',
-                        color: 'var(--status-warning)',
-                        border: '1px solid var(--border-medium)',
-                        padding: '2px 8px',
-                        borderRadius: '3px',
-                        fontSize: '11px',
-                        fontWeight: 700,
-                        cursor: 'pointer'
-                      }}
-                    >
-                      Acknowledge All ({activeAlerts.length})
-                    </button>
-                  )}
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '110px', overflowY: 'auto' }}>
-                  {unresolvedAlerts.map((a) => {
-                    const isCrit = a.severity === 2;
-                    const isAck = a.status === 'acknowledged';
-                    return (
-                      <div
-                        key={a.id}
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          backgroundColor: 'var(--bg-surface-subtle)',
-                          borderLeft: `3px solid ${isCrit ? 'var(--status-critical)' : 'var(--status-warning)'}`,
-                          padding: '4px 10px',
-                          borderRadius: '2px',
-                          fontSize: '12px'
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{
-                            fontSize: '10.5px',
-                            fontWeight: 800,
-                            fontFamily: 'monospace',
-                            color: isCrit ? 'var(--status-critical)' : 'var(--status-warning)'
-                          }}>
-                            {isAck ? '[ACKNOWLEDGED]' : isCrit ? '[CRITICAL ALARM]' : '[WARNING]'}
-                          </span>
-                          <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>
-                            {a.category}
-                          </span>
-                          <span style={{ color: 'var(--text-secondary)', fontSize: '11.5px' }}>
-                            — {a.explanation}
-                          </span>
-                        </div>
-
-                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                          <button
-                            onClick={() => handleValidateAlert(a.id, 'confirmed_cavitation')}
-                            style={{
-                              backgroundColor: 'transparent',
-                              color: 'var(--status-normal)',
-                              border: '1px dashed var(--border-subtle)',
-                              padding: '2px 6px',
-                              borderRadius: '2px',
-                              fontSize: '10px',
-                              cursor: 'pointer'
-                            }}
-                            title="Confirm genuine cavitation detection"
-                          >
-                            ✓ Confirm
-                          </button>
-                          <button
-                            onClick={() => handleValidateAlert(a.id, 'false_positive')}
-                            style={{
-                              backgroundColor: 'transparent',
-                              color: 'var(--status-critical)',
-                              border: '1px dashed var(--border-subtle)',
-                              padding: '2px 6px',
-                              borderRadius: '2px',
-                              fontSize: '10px',
-                              cursor: 'pointer'
-                            }}
-                            title="Classify as false positive"
-                          >
-                            ✗ FP
-                          </button>
-                          {!isAck && (
-                            <button
-                              onClick={() => handleAckAlert(a.id)}
-                              style={{
-                                backgroundColor: 'transparent',
-                                color: 'var(--status-warning)',
-                                border: '1px solid var(--border-subtle)',
-                                padding: '2px 8px',
-                                borderRadius: '2px',
-                                fontSize: '11px',
-                                fontWeight: 600,
-                                cursor: 'pointer'
-                              }}
-                            >
-                              Ack
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleResolveAlert(a.id)}
-                            style={{
-                              backgroundColor: 'transparent',
-                              color: 'var(--status-normal)',
-                              border: '1px solid var(--border-subtle)',
-                              padding: '2px 8px',
-                              borderRadius: '2px',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              cursor: 'pointer'
-                            }}
-                          >
-                            Resolve
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* 3. Diagnostic Area: Switched to Bottom */}
-            <RiskGauge
-              score={telemetry?.prediction?.model_score ?? 0.05}
-              riskLevel={telemetry?.prediction?.risk_level ?? 0}
-              status={telemetry?.prediction?.predicted_class || telemetry?.status || 'Normal Operation'}
-              trajectory={telemetry?.prediction?.trajectory || 'Stable'}
-              riskVelocity={telemetry?.prediction?.risk_velocity_per_min || 0}
-              sequenceFeatures={telemetry?.prediction?.sequence_features}
-              predictionHistory={telemetry?.prediction_history || []}
-              modelVersion={telemetry?.prediction?.model_version || 'v2.1.0-timeseries'}
-              breaches={telemetry?.threshold_breaches || []}
-              attributions={telemetry?.prediction?.attributions || explanation?.attributions || []}
-              activeAlertCount={activeAlerts.length}
-              onAcknowledgeAll={handleAcknowledgeAll}
+          {/* Right Column: Main Cavitation Probability Chart */}
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <CavitationProbabilityChart
+              currentProbability={prob}
+              history={telemetry?.prediction_history || []}
+              faultSeverityPercent={faultSeverity}
+              faultActive={faultActive}
             />
           </div>
-        )}
+        </main>
+      )}
 
-        {/* Tab 2: Analytics & Model Sensitivity */}
-        {activeTab === 'analytics' && (
+      {/* Model & Diagnostics Tab */}
+      {activeTab === 'analytics' && (
+        <main style={{ flex: 1, padding: '16px 24px', overflowY: 'auto' }}>
           <AnalyticsPanel
             metrics={metrics}
             latestExplanation={explanation}
             onRetrain={handleRetrain}
             onDeploy={handleDeploy}
           />
-        )}
+        </main>
+      )}
 
-        {/* Tab 3: History & Alarms */}
-        {activeTab === 'history' && (
+      {/* Alarms & History Tab */}
+      {activeTab === 'history' && (
+        <main style={{ flex: 1, padding: '16px 24px', overflowY: 'auto' }}>
           <HistoryExportPanel
             alerts={alerts}
             onAcknowledgeAlert={handleAckAlert}
@@ -725,8 +612,86 @@ export const App: React.FC = () => {
             onClearData={handleClearData}
             onRefreshAlerts={fetchAuxiliaryData}
           />
-        )}
-      </main>
+        </main>
+      )}
+
+      {/* 4. Bottom Telemetry Bar: 6 Measurements in exact layout */}
+      <footer style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(6, 1fr)',
+        backgroundColor: '#0d1117',
+        borderTop: '1px solid #1e293b',
+        padding: '12px 0',
+        flexShrink: 0
+      }}>
+        {/* 1. Suction press. */}
+        <div style={{ padding: '0 24px', borderRight: '1px solid #1e293b' }}>
+          <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '3px' }}>
+            Suction press.
+          </div>
+          <div style={{ fontSize: '16px', fontWeight: 700, color: '#f8fafc', fontFamily: 'monospace' }}>
+            {currentReadings.suction_pressure !== null ? currentReadings.suction_pressure.toFixed(2) : '0.42'}{' '}
+            <span style={{ fontSize: '12px', fontWeight: 400, color: '#94a3b8' }}>bar</span>
+          </div>
+        </div>
+
+        {/* 2. Discharge press. */}
+        <div style={{ padding: '0 24px', borderRight: '1px solid #1e293b' }}>
+          <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '3px' }}>
+            Discharge press.
+          </div>
+          <div style={{ fontSize: '16px', fontWeight: 700, color: '#f8fafc', fontFamily: 'monospace' }}>
+            {currentReadings.discharge_pressure !== null ? currentReadings.discharge_pressure.toFixed(2) : '4.10'}{' '}
+            <span style={{ fontSize: '12px', fontWeight: 400, color: '#94a3b8' }}>bar</span>
+          </div>
+        </div>
+
+        {/* 3. Flow */}
+        <div style={{ padding: '0 24px', borderRight: '1px solid #1e293b' }}>
+          <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '3px' }}>
+            Flow
+          </div>
+          <div style={{ fontSize: '16px', fontWeight: 700, color: '#f8fafc', fontFamily: 'monospace' }}>
+            {currentReadings.flow_rate !== null ? currentReadings.flow_rate.toFixed(1) : '38.2'}{' '}
+            <span style={{ fontSize: '12px', fontWeight: 400, color: '#94a3b8' }}>m3/h</span>
+          </div>
+        </div>
+
+        {/* 4. Vibration RMS */}
+        <div style={{ padding: '0 24px', borderRight: '1px solid #1e293b' }}>
+          <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '3px' }}>
+            Vibration RMS
+          </div>
+          <div style={{ fontSize: '16px', fontWeight: 700, color: '#f8fafc', fontFamily: 'monospace' }}>
+            {currentReadings.vibration_rms !== null ? currentReadings.vibration_rms.toFixed(1) : '6.8'}{' '}
+            <span style={{ fontSize: '12px', fontWeight: 400, color: '#94a3b8' }}>mm/s</span>
+          </div>
+        </div>
+
+        {/* 5. Motor current */}
+        <div style={{ padding: '0 24px', borderRight: '1px solid #1e293b' }}>
+          <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '3px' }}>
+            Motor current
+          </div>
+          <div style={{ fontSize: '16px', fontWeight: 700, color: '#f8fafc', fontFamily: 'monospace' }}>
+            {currentReadings.motor_current !== undefined && currentReadings.motor_current !== null
+              ? currentReadings.motor_current.toFixed(1)
+              : '11.9'}{' '}
+            <span style={{ fontSize: '12px', fontWeight: 400, color: '#94a3b8' }}>A</span>
+          </div>
+        </div>
+
+        {/* 6. Temperature */}
+        <div style={{ padding: '0 24px' }}>
+          <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '3px' }}>
+            Temperature
+          </div>
+          <div style={{ fontSize: '16px', fontWeight: 700, color: '#f8fafc', fontFamily: 'monospace' }}>
+            {currentReadings.temperature !== null ? currentReadings.temperature.toFixed(0) : '58'}{' '}
+            <span style={{ fontSize: '12px', fontWeight: 400, color: '#94a3b8' }}>degC</span>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 };

@@ -4,7 +4,10 @@
   "description": "NEXCAV - Pump Cavitation Intelligence & Telemetry Dashboard",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node start_services.js",
+    "start:all": "node start_services.js",
+    "start:node": "node server.js",
+    "start:ml": "python ml/serve.py",
     "backend": "node server.js",
     "server": "node server.js",
     "frontend": "npm run dev --prefix frontend",
